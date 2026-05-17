@@ -1,0 +1,195 @@
+import { City } from '@/constants/types';
+
+export const cities: City[] = [
+  {
+    id: '1',
+    name: 'Барнаул',
+    region: 'Алтайский край',
+    email: 'terra-barnaul@mail.ru',
+    isMain: false,
+    receptionPoints: [
+      {
+        id: '1-1',
+        address: 'ул. Трактовая, 47/3',
+        phone: '+7 (905) 982-39-45',
+        workingHours: 'Пн-Сб: 9:00 — 18:00',
+        latitude: 53.3468,
+        longitude: 83.7556,
+      },
+      {
+        id: '1-2',
+        address: 'ул. Фабричная, 2',
+        phone: '+7 (905) 982-39-45',
+        workingHours: 'Пн-Сб: 9:00 — 18:00',
+        latitude: 53.3640,
+        longitude: 83.7490,
+      },
+      {
+        id: '1-3',
+        address: 'ул. Власихинская, 45 к2',
+        phone: '+7 (905) 982-39-45',
+        workingHours: 'Пн-Сб: 9:00 — 18:00',
+        latitude: 53.3725,
+        longitude: 83.6918,
+      },
+    ],
+  },
+  {
+    id: '3',
+    name: 'Заринск',
+    region: 'Алтайский край',
+    email: 'terra-barnaul@mail.ru',
+    isMain: false,
+    receptionPoints: [
+      {
+        id: '3-1',
+        address: 'ул. Кооперативная, 1',
+        phone: '+7 (913) 245-66-23',
+        workingHours: 'Пн-Пт: 9:00 — 17:00',
+        latitude: 53.7063,
+        longitude: 84.9320,
+      },
+    ],
+  },
+  {
+    id: '2',
+    name: 'Рубцовск',
+    region: 'Алтайский край',
+    email: 'terra-barnaul@mail.ru',
+    isMain: false,
+    receptionPoints: [
+      {
+        id: '2-1',
+        address: 'ул. Р. Зорге, 165',
+        phone: '+7 (38557) 6-36-16, +7 (983) 181-63-34',
+        workingHours: 'Пн-Пт: 9:00 — 17:00',
+        latitude: 51.5120,
+        longitude: 81.2035,
+      },
+      {
+        id: '2-2',
+        address: 'ул. Красная, 100',
+        phone: '+7 (923) 749-17-48, +7 (983) 181-63-34',
+        workingHours: 'Пн-Пт: 9:00 — 17:00',
+        latitude: 51.5065,
+        longitude: 81.2150,
+      },
+    ],
+  },
+  {
+    id: '4',
+    name: 'Алейск',
+    region: 'Алтайский край',
+    email: 'terra-barnaul@mail.ru',
+    isMain: false,
+    receptionPoints: [
+      {
+        id: '4-1',
+        address: 'ул. Советская, 6',
+        phone: '+7 (905) 080-00-99, +7 (983) 380-37-57',
+        workingHours: 'Пн-Пт: 9:00 — 17:00',
+        latitude: 52.4922,
+        longitude: 82.7793,
+      },
+    ],
+  },
+  {
+    id: '5',
+    name: 'Новоалтайск',
+    region: 'Алтайский край',
+    email: 'terra-barnaul@mail.ru',
+    isMain: false,
+    receptionPoints: [
+      {
+        id: '5-1',
+        address: 'ул. Промплощадка, 43В',
+        phone: '+7 (905) 982-39-45',
+        workingHours: 'Пн-Сб: 9:00 — 18:00',
+        latitude: 53.3932,
+        longitude: 83.9365,
+      },
+    ],
+  },
+  {
+    id: '6',
+    name: 'Поспелиха',
+    region: 'Алтайский край',
+    email: 'terra-barnaul@mail.ru',
+    isMain: false,
+    receptionPoints: [
+      {
+        id: '6-1',
+        address: 'ул. Коммунистическая, 103',
+        phone: '+7 (913) 099-60-04',
+        workingHours: 'Пн-Пт: 9:00 — 17:00',
+        latitude: 51.9635,
+        longitude: 81.8374,
+      },
+    ],
+  },
+  {
+    id: '7',
+    name: 'Искитим',
+    region: 'Новосибирская область',
+    email: 'terra-barnaul@mail.ru',
+    isMain: false,
+    receptionPoints: [
+      {
+        id: '7-1',
+        address: 'ул. Кооперативная, 37, к1',
+        phone: '+7 (913) 377-11-33, +7 (383) 213-22-11',
+        workingHours: 'Пн-Пт: 9:00 — 17:00',
+        latitude: 54.6364,
+        longitude: 83.3045,
+      },
+    ],
+  },
+  {
+    id: '9',
+    name: 'Новосибирск',
+    region: 'Новосибирская область',
+    email: 'Avion.54@mail.ru',
+    isMain: false,
+    receptionPoints: [
+      {
+        id: '9-1',
+        address: 'ул. Писемского, 23',
+        phone: '+7 (983) 308-68-85',
+        workingHours: 'Пн-Сб: 9:00 — 18:00',
+        latitude: 55.0304,
+        longitude: 82.9211,
+      },
+      {
+        id: '9-2',
+        address: 'ул. Бориса Богаткова, 268Б (цветной лом)',
+        phone: '+7 (983) 308-68-85, +7 (923) 119-70-08',
+        workingHours: 'Пн-Сб: 9:00 — 18:00',
+        latitude: 55.0084,
+        longitude: 82.9857,
+      },
+    ],
+  },
+  {
+    id: '8',
+    name: 'Новосибирск (Главный)',
+    region: 'Новосибирская область',
+    email: 'Avion.54@mail.ru',
+    isMain: false,
+    receptionPoints: [
+      {
+        id: '8-1',
+        address: 'ул. Писемского, 23',
+        phone: '+7 (983) 308-68-85',
+        workingHours: 'Пн-Сб: 9:00 — 18:00',
+        latitude: 55.0304,
+        longitude: 82.9211,
+      },
+    ],
+  },
+];
+
+export const cityRegions = [
+  { key: 'all' as const, label: 'Все города' },
+  { key: 'altai' as const, label: 'Алтайский край' },
+  { key: 'novosibirsk' as const, label: 'Новосибирская область' },
+];

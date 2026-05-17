@@ -1,0 +1,9 @@
+{
+  "apps": [
+    {
+      "name": "Промметпласт app store",
+      "path": "expo",
+      "framework": "react-native"
+    }
+  ]
+}
