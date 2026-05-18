@@ -8,11 +8,17 @@ const MetalAnalysisSchema = z.object({
 
 export type MetalAnalysisResult = z.infer<typeof MetalAnalysisSchema>;
 
-export async function analyzeMetalImage(base64Image: string, metalNames: string[]): Promise<MetalAnalysisResult> {
+export async function analyzeMetalImage(base64Image: string, metalNames: string[], userHint?: string): Promise<MetalAnalysisResult> {
   console.log('[OpenAI] Starting metal image analysis...');
   console.log('[OpenAI] Available metals:', metalNames.length);
+  if (userHint && userHint.trim().length > 0) {
+    console.log('[OpenAI] User hint:', userHint);
+  }
 
   const metalList = metalNames.map((n, i) => `${i + 1}. ${n}`).join('\n');
+  const hintBlock = userHint && userHint.trim().length > 0
+    ? `\n\nПользователь предположил, что это: "${userHint.trim()}". Учти эту подсказку, но если фото явно противоречит — выбери более подходящий вариант из списка.`
+    : '';
 
   const result = await generateObject({
     messages: [
@@ -28,7 +34,7 @@ export async function analyzeMetalImage(base64Image: string, metalNames: string[
 ${metalList}
 
 Верни название металла точно как в списке и уровень уверенности от 0 до 1.
-Если не можешь определить — выбери наиболее подходящий вариант с низкой уверенностью.`,
+Если не можешь определить — выбери наиболее подходящий вариант с низкой уверенностью.${hintBlock}`,
           },
           {
             type: 'image',

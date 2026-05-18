@@ -23,6 +23,7 @@ import {
   Check,
   Scale,
   Sparkles,
+  Tag,
   AlertTriangle,
   RotateCcw,
   Info,
@@ -82,6 +83,7 @@ export default function EstimateScreen() {
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [weight, setWeight] = useState<string>('');
+  const [metalHint, setMetalHint] = useState<string>('');
   const [result, setResult] = useState<EstimateResult | null>(null);
   const [permissionHint, setPermissionHint] = useState<string | null>(null);
   const resultAnim = useRef(new Animated.Value(0)).current;
@@ -117,7 +119,7 @@ export default function EstimateScreen() {
 
       console.log('[Estimate] Starting analysis for city:', selectedCityId);
       const metalNames = cityMetals.map((m) => m.name);
-      const analysis: MetalAnalysisResult = await analyzeMetalImage(imageBase64, metalNames);
+      const analysis: MetalAnalysisResult = await analyzeMetalImage(imageBase64, metalNames, metalHint.trim() || undefined);
       console.log('[Estimate] AI result:', analysis.metalName, 'confidence:', analysis.confidence);
 
       const metal = cityMetals.find(
@@ -243,6 +245,7 @@ export default function EstimateScreen() {
     setImageUri(null);
     setImageBase64(null);
     setWeight('');
+    setMetalHint('');
     setResult(null);
     resultAnim.setValue(0);
   }, [resultAnim]);
@@ -518,6 +521,32 @@ export default function EstimateScreen() {
 
           <View style={styles.inputGroup}>
             <View style={styles.inputLabelRow}>
+              <Tag size={14} color={Colors.primary} />
+              <Text style={styles.inputLabel}>Тип металла</Text>
+              <Text style={styles.inputLabelOptional}>необязательно</Text>
+            </View>
+            <TextInput
+              style={styles.input}
+              placeholder="Например: медь, алюминий, чугун"
+              placeholderTextColor={Colors.textTertiary}
+              value={metalHint}
+              onChangeText={(val) => {
+                setMetalHint(val);
+                setResult(null);
+              }}
+              autoCapitalize="none"
+              testID="input-metal-hint"
+            />
+            <View style={styles.hintRowInput}>
+              <Info size={13} color={Colors.textTertiary} />
+              <Text style={[styles.hintText, { color: Colors.textTertiary }]}>
+                Подскажите AI, какой это металл — повысит точность
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.inputGroup}>
+            <View style={styles.inputLabelRow}>
               <Scale size={14} color={Colors.primary} />
               <Text style={styles.inputLabel}>Вес (кг)</Text>
             </View>
@@ -739,6 +768,12 @@ const createStyles = (Colors: AppColors) => StyleSheet.create({
     fontSize: 13,
     fontWeight: '600' as const,
     color: Colors.textSecondary,
+  },
+  inputLabelOptional: {
+    fontSize: 11,
+    fontWeight: '500' as const,
+    color: Colors.textTertiary,
+    marginLeft: 4,
   },
   input: {
     backgroundColor: Colors.bgInput,
