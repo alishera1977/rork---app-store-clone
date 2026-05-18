@@ -1,18 +1,21 @@
--- Таблица для хранения Expo Push Tokens и пользовательских настроек
--- Запустить один раз в Supabase SQL Editor.
+-- Таблица для хранения Expo Push Tokens и пользовательских настроек.
+-- Идемпотентная миграция: безопасно выполнять повторно.
+-- Запустить в Supabase SQL Editor проекта.
 
 create table if not exists public.push_tokens (
   id uuid primary key default gen_random_uuid(),
   token text not null unique,
   platform text not null check (platform in ('ios', 'android')),
   city text,
-  price_increase boolean not null default true,
-  price_decrease boolean not null default true,
-  request_status boolean not null default true,
-  company_news boolean not null default true,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  created_at timestamptz not null default now()
 );
+
+-- Догоняющие колонки (на случай, если таблица была создана раньше без них).
+alter table public.push_tokens add column if not exists price_increase boolean not null default true;
+alter table public.push_tokens add column if not exists price_decrease boolean not null default true;
+alter table public.push_tokens add column if not exists request_status boolean not null default true;
+alter table public.push_tokens add column if not exists company_news boolean not null default true;
+alter table public.push_tokens add column if not exists updated_at timestamptz not null default now();
 
 create index if not exists push_tokens_city_idx on public.push_tokens (city);
 create index if not exists push_tokens_price_increase_idx on public.push_tokens (price_increase);
