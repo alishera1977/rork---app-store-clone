@@ -49,10 +49,13 @@ interface EstimateResult {
   metal: ApiMetal;
   confidence: number;
   cityName: string;
-  pricePerKg: number;
+  displayPrice: number;
+  priceUnit: string;
+  effectivePricePerKg: number;
   weight: number;
   total: number;
   isFerrous: boolean;
+  tierLabel: string | null;
 }
 
 function groupCitiesByRegion(allCities: City[]): CityGroup[] {
@@ -132,14 +135,31 @@ export default function EstimateScreen() {
       }
 
       const isFerrous = metal.category === 'ferrous';
-      let pricePerKg: number;
-      if (weightNum >= 50) {
-        pricePerKg = metal.priceCardFrom50 ?? metal.priceCardUpto50 ?? metal.pricePerKg;
+
+      let displayPrice: number;
+      let priceUnit: string;
+      let effectivePricePerKg: number;
+      let tierLabel: string | null = null;
+
+      if (isFerrous) {
+        const pricePerTon = metal.priceCardFrom50 ?? metal.priceCardUpto50 ?? metal.priceAccountLegal ?? metal.pricePerKg;
+        displayPrice = pricePerTon;
+        priceUnit = '₽/т';
+        effectivePricePerKg = pricePerTon / 1000;
       } else {
-        pricePerKg = metal.priceCardUpto50 ?? metal.priceCardFrom50 ?? metal.pricePerKg;
+        if (weightNum >= 50) {
+          displayPrice = metal.priceCardFrom50 ?? metal.priceCardUpto50 ?? metal.pricePerKg;
+          tierLabel = 'от 50 кг';
+        } else {
+          displayPrice = metal.priceCardUpto50 ?? metal.priceCardFrom50 ?? metal.pricePerKg;
+          tierLabel = 'до 50 кг';
+        }
+        priceUnit = '₽/кг';
+        effectivePricePerKg = displayPrice;
       }
-      console.log('[Estimate] Weight:', weightNum, 'kg, using price tier:', weightNum >= 50 ? 'from50' : 'upto50', 'price:', pricePerKg);
-      const total = pricePerKg * weightNum;
+
+      const total = effectivePricePerKg * weightNum;
+      console.log('[Estimate] Weight:', weightNum, 'kg, ferrous:', isFerrous, 'displayPrice:', displayPrice, priceUnit, 'effective ₽/кг:', effectivePricePerKg, 'total:', total);
 
       const cityObj = cities.find((c) => c.id === selectedCityId);
 
@@ -147,10 +167,13 @@ export default function EstimateScreen() {
         metal,
         confidence: analysis.confidence,
         cityName: cityObj?.name ?? '',
-        pricePerKg,
+        displayPrice,
+        priceUnit,
+        effectivePricePerKg,
         weight: weightNum,
         total,
         isFerrous,
+        tierLabel,
       } satisfies EstimateResult;
     },
     onSuccess: (data) => {
@@ -393,11 +416,22 @@ export default function EstimateScreen() {
         </View>
 
         <View style={styles.resultRow}>
-          <Text style={styles.resultLabel}>Цена</Text>
+          <Text style={styles.resultLabel}>
+            Цена{result.tierLabel ? ` (${result.tierLabel})` : ''}
+          </Text>
           <Text style={styles.resultValue}>
-            {formatCurrency(result.pricePerKg)} ₽/{result.isFerrous ? 'кг' : 'кг'}
+            {formatCurrency(result.displayPrice)} {result.priceUnit}
           </Text>
         </View>
+
+        {result.isFerrous && (
+          <View style={styles.resultRow}>
+            <Text style={styles.resultLabel}>В пересчёте</Text>
+            <Text style={styles.resultValue}>
+              {formatCurrency(Math.round(result.effectivePricePerKg * 100) / 100)} ₽/кг
+            </Text>
+          </View>
+        )}
 
         <View style={styles.resultRow}>
           <Text style={styles.resultLabel}>Вес</Text>
