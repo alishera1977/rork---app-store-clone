@@ -27,6 +27,8 @@ import {
   AlertTriangle,
   RotateCcw,
   Info,
+  User,
+  Building2,
 } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
@@ -45,6 +47,8 @@ interface CityGroup {
   cities: City[];
 }
 
+type PayerType = 'individual' | 'legal';
+
 interface EstimateResult {
   metal: ApiMetal;
   confidence: number;
@@ -56,6 +60,7 @@ interface EstimateResult {
   total: number;
   isFerrous: boolean;
   tierLabel: string | null;
+  payerType: PayerType;
 }
 
 function groupCitiesByRegion(allCities: City[]): CityGroup[] {
@@ -87,6 +92,7 @@ export default function EstimateScreen() {
   const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [weight, setWeight] = useState<string>('');
   const [metalHint, setMetalHint] = useState<string>('');
+  const [payerType, setPayerType] = useState<PayerType>('individual');
   const [result, setResult] = useState<EstimateResult | null>(null);
   const [permissionHint, setPermissionHint] = useState<string | null>(null);
   const resultAnim = useRef(new Animated.Value(0)).current;
@@ -142,17 +148,23 @@ export default function EstimateScreen() {
       let tierLabel: string | null = null;
 
       if (isFerrous) {
-        const pricePerTon = metal.priceCardFrom50 ?? metal.priceCardUpto50 ?? metal.priceAccountLegal ?? metal.pricePerKg;
+        const pricePerTon = payerType === 'legal'
+          ? (metal.priceAccountLegal ?? metal.priceCardFrom50 ?? metal.priceCardUpto50 ?? metal.pricePerKg)
+          : (metal.priceCardFrom50 ?? metal.priceCardUpto50 ?? metal.priceAccountLegal ?? metal.pricePerKg);
         displayPrice = pricePerTon;
         priceUnit = '₽/т';
         effectivePricePerKg = pricePerTon / 1000;
+        tierLabel = payerType === 'legal' ? 'юр. лицо' : 'физ. лицо';
       } else {
-        if (weightNum >= 50) {
+        if (payerType === 'legal') {
+          displayPrice = metal.priceAccountLegal ?? metal.priceCardFrom50 ?? metal.priceCardUpto50 ?? metal.pricePerKg;
+          tierLabel = 'юр. лицо';
+        } else if (weightNum >= 50) {
           displayPrice = metal.priceCardFrom50 ?? metal.priceCardUpto50 ?? metal.pricePerKg;
-          tierLabel = 'от 50 кг';
+          tierLabel = 'физ. лицо, от 50 кг';
         } else {
           displayPrice = metal.priceCardUpto50 ?? metal.priceCardFrom50 ?? metal.pricePerKg;
-          tierLabel = 'до 50 кг';
+          tierLabel = 'физ. лицо, до 50 кг';
         }
         priceUnit = '₽/кг';
         effectivePricePerKg = displayPrice;
@@ -174,6 +186,7 @@ export default function EstimateScreen() {
         total,
         isFerrous,
         tierLabel,
+        payerType,
       } satisfies EstimateResult;
     },
     onSuccess: (data) => {
@@ -272,6 +285,14 @@ export default function EstimateScreen() {
     setResult(null);
     resultAnim.setValue(0);
   }, [resultAnim]);
+
+  const handlePayerTypeChange = useCallback((type: PayerType) => {
+    if (Platform.OS !== 'web') {
+      void Haptics.selectionAsync();
+    }
+    setPayerType(type);
+    setResult(null);
+  }, []);
 
   React.useEffect(() => {
     const loop = Animated.loop(
@@ -581,6 +602,45 @@ export default function EstimateScreen() {
 
           <View style={styles.inputGroup}>
             <View style={styles.inputLabelRow}>
+              <User size={14} color={Colors.primary} />
+              <Text style={styles.inputLabel}>Расчёт для</Text>
+            </View>
+            <View style={styles.payerSegment}>
+              <TouchableOpacity
+                style={[styles.payerSegmentBtn, payerType === 'individual' && styles.payerSegmentBtnActive]}
+                onPress={() => handlePayerTypeChange('individual')}
+                activeOpacity={0.8}
+                testID="btn-payer-individual"
+              >
+                <User size={16} color={payerType === 'individual' ? Colors.bg : Colors.textSecondary} />
+                <Text style={[styles.payerSegmentText, payerType === 'individual' && styles.payerSegmentTextActive]}>
+                  Физ. лицо
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.payerSegmentBtn, payerType === 'legal' && styles.payerSegmentBtnActive]}
+                onPress={() => handlePayerTypeChange('legal')}
+                activeOpacity={0.8}
+                testID="btn-payer-legal"
+              >
+                <Building2 size={16} color={payerType === 'legal' ? Colors.bg : Colors.textSecondary} />
+                <Text style={[styles.payerSegmentText, payerType === 'legal' && styles.payerSegmentTextActive]}>
+                  Юр. лицо
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.hintRowInput}>
+              <Info size={13} color={Colors.textTertiary} />
+              <Text style={[styles.hintText, { color: Colors.textTertiary }]}>
+                {payerType === 'legal'
+                  ? 'Цена по безналу с НДС для юридических лиц'
+                  : 'Цена за наличный расчёт для физических лиц'}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.inputGroup}>
+            <View style={styles.inputLabelRow}>
               <Scale size={14} color={Colors.primary} />
               <Text style={styles.inputLabel}>Вес (кг)</Text>
             </View>
@@ -808,6 +868,36 @@ const createStyles = (Colors: AppColors) => StyleSheet.create({
     fontWeight: '500' as const,
     color: Colors.textTertiary,
     marginLeft: 4,
+  },
+  payerSegment: {
+    flexDirection: 'row',
+    backgroundColor: Colors.bgInput,
+    borderRadius: 12,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 4,
+  },
+  payerSegmentBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 11,
+    borderRadius: 9,
+  },
+  payerSegmentBtnActive: {
+    backgroundColor: Colors.primary,
+  },
+  payerSegmentText: {
+    fontSize: 14,
+    fontWeight: '600' as const,
+    color: Colors.textSecondary,
+  },
+  payerSegmentTextActive: {
+    color: Colors.bg,
+    fontWeight: '700' as const,
   },
   input: {
     backgroundColor: Colors.bgInput,
