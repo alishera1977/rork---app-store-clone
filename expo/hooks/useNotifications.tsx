@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import createContextHook from '@nkzw/create-context-hook';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform } from 'react-native';
+import { upsertPushToken } from '@/services/pushTokens';
 
 const STORAGE_KEY = 'notifications-state-v1';
 
@@ -60,17 +61,26 @@ const toApiSettings = (prefs: NotificationPrefs): PushTokenPayload['settings'] =
 });
 
 /**
- * Отправка токена и настроек на универсальный backend.
- * URL берётся из EXPO_PUBLIC_PUSH_API_URL. Если не задан — только debug-лог,
- * никаких ошибок пользователю. Любые сетевые сбои подавляются, чтобы
- * приложение не падало и сохраняло локальные настройки (Guideline 5.1.1 ок).
+ * Отправка токена и настроек в Supabase (таблица push_tokens).
+ * Если Supabase не сконфигурирован или сеть недоступна — подавляем ошибки,
+ * локальные настройки в AsyncStorage сохраняются всегда (Guideline 5.1.1 ок).
+ *
+ * Дополнительно: если задан EXPO_PUBLIC_PUSH_API_URL — дублируем POST туда,
+ * чтобы сохранить совместимость со старым кастомным backend.
  */
 const postPushToken = async (payload: PushTokenPayload): Promise<void> => {
+  await upsertPushToken({
+    token: payload.token,
+    platform: payload.platform,
+    city: payload.city,
+    priceIncrease: payload.settings.priceIncrease,
+    priceDecrease: payload.settings.priceDecrease,
+    requestStatus: payload.settings.requestStatus,
+    companyNews: payload.settings.companyNews,
+  });
+
   const baseUrl = process.env.EXPO_PUBLIC_PUSH_API_URL;
-  if (!baseUrl) {
-    console.log('[push] EXPO_PUBLIC_PUSH_API_URL is not set, skip sync', payload);
-    return;
-  }
+  if (!baseUrl) return;
   const url = `${baseUrl.replace(/\/$/, '')}/push-token`;
   try {
     const controller = new AbortController();
@@ -84,9 +94,7 @@ const postPushToken = async (payload: PushTokenPayload): Promise<void> => {
     clearTimeout(timeout);
     if (!res.ok) {
       console.log('[push] backend responded with non-ok status', res.status);
-      return;
     }
-    console.log('[push] token synced');
   } catch (err) {
     console.log('[push] sync failed (suppressed)', err);
   }
