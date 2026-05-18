@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import createContextHook from '@nkzw/create-context-hook';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 
 const STORAGE_KEY = 'notifications-state-v1';
@@ -14,15 +14,16 @@ export type NotificationCategory =
 export type NotificationPrefs = Record<NotificationCategory, boolean>;
 
 export type NotificationPermissionStatus =
-  | 'undetermined' // ещё не спрашивали
-  | 'softDismissed' // пользователь нажал «Позже» во внутреннем баннере
-  | 'granted' // системное разрешение получено
-  | 'denied'; // системное разрешение отклонено
+  | 'undetermined'
+  | 'softDismissed'
+  | 'granted'
+  | 'denied';
 
 interface PersistedState {
   status: NotificationPermissionStatus;
   prefs: NotificationPrefs;
   expoPushToken: string | null;
+  city: string | null;
 }
 
 const DEFAULT_PREFS: NotificationPrefs = {
@@ -36,25 +37,77 @@ const DEFAULT_STATE: PersistedState = {
   status: 'undetermined',
   prefs: DEFAULT_PREFS,
   expoPushToken: null,
+  city: null,
+};
+
+interface PushTokenPayload {
+  token: string;
+  platform: 'ios' | 'android';
+  city: string | null;
+  settings: {
+    priceIncrease: boolean;
+    priceDecrease: boolean;
+    requestStatus: boolean;
+    companyNews: boolean;
+  };
+}
+
+const toApiSettings = (prefs: NotificationPrefs): PushTokenPayload['settings'] => ({
+  priceIncrease: prefs.priceUp,
+  priceDecrease: prefs.priceDown,
+  requestStatus: prefs.requestStatus,
+  companyNews: prefs.companyNews,
+});
+
+/**
+ * Отправка токена и настроек на универсальный backend.
+ * URL берётся из EXPO_PUBLIC_PUSH_API_URL. Если не задан — только debug-лог,
+ * никаких ошибок пользователю. Любые сетевые сбои подавляются, чтобы
+ * приложение не падало и сохраняло локальные настройки (Guideline 5.1.1 ок).
+ */
+const postPushToken = async (payload: PushTokenPayload): Promise<void> => {
+  const baseUrl = process.env.EXPO_PUBLIC_PUSH_API_URL;
+  if (!baseUrl) {
+    console.log('[push] EXPO_PUBLIC_PUSH_API_URL is not set, skip sync', payload);
+    return;
+  }
+  const url = `${baseUrl.replace(/\/$/, '')}/push-token`;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) {
+      console.log('[push] backend responded with non-ok status', res.status);
+      return;
+    }
+    console.log('[push] token synced');
+  } catch (err) {
+    console.log('[push] sync failed (suppressed)', err);
+  }
 };
 
 /**
  * Управление push-уведомлениями (только iOS).
  *
- * Сейчас в Expo Go нативный модуль `expo-notifications` недоступен,
- * поэтому реальный системный запрос разрешения и получение Expo Push Token
- * подключаются на этапе production-сборки. Этот хук уже хранит статус,
- * настройки по категориям и токен в AsyncStorage и предоставляет API
- * (`requestSystemPermission`), куда останется добавить пару строк
- * `Notifications.requestPermissionsAsync()` / `getExpoPushTokenAsync()`.
- *
- * Соответствует Apple Guideline 5.1.1: повторно после отказа пользователь
- * не беспокоится, навязчивые popup'ы и автоматический openSettings отсутствуют.
+ * Соответствует Apple Guideline 5.1.1: после отказа пользователя
+ * не показываем повторных popup, не открываем настройки iOS автоматически,
+ * не блокируем экраны.
  */
 export const [NotificationsProvider, useNotifications] = createContextHook(() => {
   const [state, setState] = useState<PersistedState>(DEFAULT_STATE);
   const [hydrated, setHydrated] = useState<boolean>(false);
   const [requesting, setRequesting] = useState<boolean>(false);
+  const stateRef = useRef<PersistedState>(DEFAULT_STATE);
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   useEffect(() => {
     let mounted = true;
@@ -64,11 +117,14 @@ export const [NotificationsProvider, useNotifications] = createContextHook(() =>
         const raw = await AsyncStorage.getItem(STORAGE_KEY);
         if (mounted && raw) {
           const parsed = JSON.parse(raw) as Partial<PersistedState>;
-          setState({
+          const next: PersistedState = {
             status: parsed.status ?? 'undetermined',
             prefs: { ...DEFAULT_PREFS, ...(parsed.prefs ?? {}) },
             expoPushToken: parsed.expoPushToken ?? null,
-          });
+            city: parsed.city ?? null,
+          };
+          setState(next);
+          stateRef.current = next;
         }
       } catch {
         // ignore
@@ -84,14 +140,28 @@ export const [NotificationsProvider, useNotifications] = createContextHook(() =>
   }, []);
 
   const persist = useCallback((next: PersistedState): void => {
+    stateRef.current = next;
     setState(next);
     void AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next)).catch(() => {});
   }, []);
 
-  /** Вызывается, когда пользователь нажал «Позже» в мягком баннере. */
+  const sync = useCallback(async (override?: Partial<PersistedState>): Promise<void> => {
+    const current: PersistedState = { ...stateRef.current, ...(override ?? {}) };
+    if (!current.expoPushToken) {
+      console.log('[push] no token yet, skip sync');
+      return;
+    }
+    await postPushToken({
+      token: current.expoPushToken,
+      platform: Platform.OS === 'android' ? 'android' : 'ios',
+      city: current.city,
+      settings: toApiSettings(current.prefs),
+    });
+  }, []);
+
   const dismissSoftPrompt = useCallback((): void => {
-    persist({ ...state, status: 'softDismissed' });
-  }, [persist, state]);
+    persist({ ...stateRef.current, status: 'softDismissed' });
+  }, [persist]);
 
   /**
    * Показывает системный диалог iOS. После отказа повторно НЕ просим,
@@ -99,67 +169,93 @@ export const [NotificationsProvider, useNotifications] = createContextHook(() =>
    */
   const requestSystemPermission = useCallback(async (): Promise<NotificationPermissionStatus> => {
     if (Platform.OS !== 'ios') {
-      const next: PersistedState = { ...state, status: 'denied' };
-      persist(next);
+      persist({ ...stateRef.current, status: 'denied' });
       return 'denied';
     }
     setRequesting(true);
     try {
-      // ── Production: раскомментировать после установки expo-notifications ──
-      // const Notifications = await import('expo-notifications');
-      // const Device = await import('expo-device');
-      // const { status: existing } = await Notifications.getPermissionsAsync();
-      // let finalStatus = existing;
-      // if (existing !== 'granted') {
-      //   const { status } = await Notifications.requestPermissionsAsync({
-      //     ios: { allowAlert: true, allowBadge: true, allowSound: true },
-      //   });
-      //   finalStatus = status;
-      // }
-      // let token: string | null = null;
-      // if (finalStatus === 'granted' && Device.isDevice) {
-      //   const projectId = process.env.EXPO_PUBLIC_PROJECT_ID;
-      //   const tokenRes = await Notifications.getExpoPushTokenAsync(
-      //     projectId ? { projectId } : undefined,
-      //   );
-      //   token = tokenRes.data;
-      // }
-      // const nextStatus: NotificationPermissionStatus =
-      //   finalStatus === 'granted' ? 'granted' : 'denied';
-      // const next: PersistedState = { ...state, status: nextStatus, expoPushToken: token };
-      // persist(next);
-      // return nextStatus;
+      let finalStatus: 'granted' | 'denied' = 'denied';
+      let token: string | null = null;
 
-      // ── Expo Go fallback: помечаем как granted, но без реального токена ──
-      const next: PersistedState = { ...state, status: 'granted', expoPushToken: null };
+      try {
+        // Динамический импорт: в Expo Go модули отсутствуют, в production-сборке
+        // (EAS / dev-client) подхватятся автоматически.
+        const Notifications = await import('expo-notifications').catch(() => null);
+        const Device = await import('expo-device').catch(() => null);
+
+        if (Notifications && Device) {
+          const existing = await Notifications.getPermissionsAsync();
+          let status = existing.status;
+          if (status !== 'granted') {
+            const req = await Notifications.requestPermissionsAsync({
+              ios: { allowAlert: true, allowBadge: true, allowSound: true },
+            });
+            status = req.status;
+          }
+          finalStatus = status === 'granted' ? 'granted' : 'denied';
+
+          if (finalStatus === 'granted' && Device.isDevice) {
+            try {
+              const projectId = process.env.EXPO_PUBLIC_PROJECT_ID;
+              const tokenRes = await Notifications.getExpoPushTokenAsync(
+                projectId ? { projectId } : undefined,
+              );
+              token = tokenRes.data;
+            } catch (err) {
+              console.log('[push] getExpoPushTokenAsync failed (suppressed)', err);
+            }
+          }
+        } else {
+          // Expo Go fallback — без реального токена, но не блокируем UX.
+          finalStatus = 'granted';
+        }
+      } catch (err) {
+        console.log('[push] permission flow failed (suppressed)', err);
+        finalStatus = 'denied';
+      }
+
+      const next: PersistedState = {
+        ...stateRef.current,
+        status: finalStatus,
+        expoPushToken: token ?? stateRef.current.expoPushToken,
+      };
       persist(next);
-      return 'granted';
-    } catch {
-      const next: PersistedState = { ...state, status: 'denied' };
-      persist(next);
-      return 'denied';
+
+      if (finalStatus === 'granted' && next.expoPushToken) {
+        void sync(next);
+      }
+      return finalStatus;
     } finally {
       setRequesting(false);
     }
-  }, [persist, state]);
+  }, [persist, sync]);
 
   const setPref = useCallback(
     (key: NotificationCategory, value: boolean): void => {
-      persist({ ...state, prefs: { ...state.prefs, [key]: value } });
+      const next: PersistedState = {
+        ...stateRef.current,
+        prefs: { ...stateRef.current.prefs, [key]: value },
+      };
+      persist(next);
+      // При изменении тоггла пересылаем актуальные настройки на backend.
+      void sync(next);
     },
-    [persist, state],
+    [persist, sync],
   );
 
-  /**
-   * Заглушка под будущий backend — токен и настройки готовы к отправке.
-   * Подключить, когда появится endpoint регистрации устройств.
-   */
+  const setCity = useCallback(
+    (city: string | null): void => {
+      if (stateRef.current.city === city) return;
+      const next: PersistedState = { ...stateRef.current, city };
+      persist(next);
+      void sync(next);
+    },
+    [persist, sync],
+  );
+
   const syncToBackend = useCallback(async (): Promise<void> => {
-    if (!state.expoPushToken) return;
-    // await fetch('/api/devices/register', { method: 'POST', body: JSON.stringify({
-    //   token: state.expoPushToken, platform: 'ios', prefs: state.prefs,
-    // })});
-  }, [state]);
+    await sync();
+  }, [sync]);
 
   const shouldShowSoftPrompt = useMemo<boolean>(
     () => hydrated && Platform.OS === 'ios' && state.status === 'undetermined',
@@ -172,10 +268,12 @@ export const [NotificationsProvider, useNotifications] = createContextHook(() =>
     status: state.status,
     prefs: state.prefs,
     expoPushToken: state.expoPushToken,
+    city: state.city,
     shouldShowSoftPrompt,
     dismissSoftPrompt,
     requestSystemPermission,
     setPref,
+    setCity,
     syncToBackend,
   };
 });
