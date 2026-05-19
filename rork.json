@@ -1,7 +1,7 @@
 {
   "apps": [
     {
-      "name": "Промметпласт app store",
+      "name": "Промметпласт ",
       "path": "expo",
       "framework": "react-native"
     }
