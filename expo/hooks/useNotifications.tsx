@@ -69,15 +69,26 @@ const toApiSettings = (prefs: NotificationPrefs): PushTokenPayload['settings'] =
  * чтобы сохранить совместимость со старым кастомным backend.
  */
 const postPushToken = async (payload: PushTokenPayload): Promise<void> => {
-  await upsertPushToken({
-    token: payload.token,
+  console.log('[push] upserting token to Supabase', {
+    tokenPreview: (payload.token ?? '').slice(0, 24) + '…',
     platform: payload.platform,
     city: payload.city,
-    priceIncrease: payload.settings.priceIncrease,
-    priceDecrease: payload.settings.priceDecrease,
-    requestStatus: payload.settings.requestStatus,
-    companyNews: payload.settings.companyNews,
+    settings: payload.settings,
   });
+  try {
+    const result = await upsertPushToken({
+      token: payload.token,
+      platform: payload.platform,
+      city: payload.city,
+      priceIncrease: payload.settings.priceIncrease,
+      priceDecrease: payload.settings.priceDecrease,
+      requestStatus: payload.settings.requestStatus,
+      companyNews: payload.settings.companyNews,
+    });
+    console.log('[push] supabase upsert result', result);
+  } catch (err) {
+    console.log('[push] supabase upsert failed (suppressed)', err);
+  }
 
   const baseUrl = process.env.EXPO_PUBLIC_PUSH_API_URL;
   if (!baseUrl) return;
