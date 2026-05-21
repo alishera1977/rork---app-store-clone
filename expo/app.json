@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Промметпласт ",
+    "name": "Промметпласт",
     "slug": "prommetplast",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -17,6 +17,8 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.prommetplast.mobile",
       "infoPlist": {
+        "CFBundleDisplayName": "Промметпласт",
+        "CFBundleName": "Промметпласт",
         "NSCameraUsageDescription": "Камера нужна, чтобы сфотографировать металлолом для предварительной оценки.",
         "NSPhotoLibraryUsageDescription": "Доступ к фото нужен, чтобы выбрать изображение металлолома для предварительной оценки.",
         "NSUserNotificationsUsageDescription": "Уведомления используются, чтобы сообщать об изменении цен на металл, статусе ваших заявок на вывоз и важных новостях компании."
