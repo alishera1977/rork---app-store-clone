@@ -32,6 +32,7 @@ import { AppColors } from '@/constants/colors';
 import { useAppTheme } from '@/hooks/useAppTheme';
 import { fetchSettings } from '@/services/api';
 import { useMetalsByCity } from '@/hooks/useMetals';
+import { usePriceDeltas } from '@/hooks/usePriceDeltas';
 
 export default function HomeScreen() {
   const { colors: Colors } = useAppTheme();
@@ -43,6 +44,7 @@ export default function HomeScreen() {
   const [_animReady, setAnimReady] = useState(Platform.OS === 'web');
 
   const { metals: cityMetals, isLoading: metalsLoading, isRefetching: metalsRefetching, refetch: refetchMetals } = useMetalsByCity('1');
+  const priceDeltas = usePriceDeltas('1', cityMetals);
 
   const settingsQuery = useQuery({
     queryKey: ['settings'],
@@ -220,6 +222,7 @@ export default function HomeScreen() {
               </View>
             ) : (
               topMetals.map((metal) => {
+                const delta = priceDeltas[metal.id];
                 return (
                   <TouchableOpacity
                     key={metal.id}
@@ -236,6 +239,14 @@ export default function HomeScreen() {
                       <Text style={styles.priceAmount}>
                         {metal.priceCardFrom50 ?? metal.pricePerKg} ₽
                       </Text>
+                      {delta != null && delta > 0 && (
+                        <View style={styles.priceChange}>
+                          <Text style={[styles.priceChangeText, { color: Colors.success }]}>
+                            +{delta.toLocaleString('ru-RU')} ₽ за сутки
+                          </Text>
+                          <TrendingUp size={12} color={Colors.success} />
+                        </View>
+                      )}
                       {metal.priceAccountLegal != null && metal.priceAccountLegal !== metal.priceCardFrom50 && (
                         <Text style={styles.priceSecondary}>
                           юрл. {metal.priceAccountLegal} ₽
