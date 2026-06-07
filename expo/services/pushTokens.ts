@@ -12,16 +12,24 @@ export interface PushTokenRecord {
 
 /**
  * Upsert push token + настройки в Supabase (таблица push_tokens).
- * Конфликт разрешаем по token. Любые ошибки подавляем — приложение
- * продолжает работать с локальными настройками.
+ * Конфликт разрешаем по token. Ошибки логируем в console.error.
  */
 export const upsertPushToken = async (record: PushTokenRecord): Promise<boolean> => {
   const supabase = getSupabase();
   if (!supabase) {
-    console.log('[push] supabase not configured, skip upsert');
+    console.warn('[push] Supabase not configured, cannot upsert push token');
     return false;
   }
   try {
+    console.log('[push] upserting token to push_tokens', {
+      tokenPreview: record.token.slice(0, 24) + '…',
+      platform: record.platform,
+      city: record.city,
+      priceIncrease: record.priceIncrease,
+      priceDecrease: record.priceDecrease,
+      requestStatus: record.requestStatus,
+      companyNews: record.companyNews,
+    });
     const { error } = await supabase
       .from('push_tokens')
       .upsert(
@@ -38,12 +46,18 @@ export const upsertPushToken = async (record: PushTokenRecord): Promise<boolean>
         { onConflict: 'token' },
       );
     if (error) {
-      console.log('[push] supabase upsert error (suppressed)', error.message);
+      console.error('[push] Supabase upsert error', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+      });
       return false;
     }
+    console.log('[push] Token successfully saved to push_tokens');
     return true;
   } catch (err) {
-    console.log('[push] supabase upsert failed (suppressed)', err);
+    console.error('[push] Supabase upsert exception', err);
     return false;
   }
 };
@@ -55,8 +69,16 @@ export const deletePushToken = async (token: string): Promise<void> => {
   const supabase = getSupabase();
   if (!supabase) return;
   try {
-    await supabase.from('push_tokens').delete().eq('token', token);
+    const { error } = await supabase.from('push_tokens').delete().eq('token', token);
+    if (error) {
+      console.error('[push] Supabase delete token error', {
+        message: error.message,
+        code: error.code,
+      });
+      return;
+    }
+    console.log('[push] Token successfully deleted from push_tokens');
   } catch (err) {
-    console.log('[push] delete token failed (suppressed)', err);
+    console.error('[push] Supabase delete token exception', err);
   }
 };
