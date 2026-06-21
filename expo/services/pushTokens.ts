@@ -1,4 +1,4 @@
-import { getSupabase } from './supabase';
+import { getSupabase, isSupabaseConfigured } from './supabase';
 
 export interface PushTokenRecord {
   token: string;
@@ -12,52 +12,64 @@ export interface PushTokenRecord {
 
 /**
  * Upsert push token + настройки в Supabase (таблица push_tokens).
- * Конфликт разрешаем по token. Ошибки логируем в console.error.
+ * Конфликт разрешаем по token. Все ошибки логируются в console.error.
  */
 export const upsertPushToken = async (record: PushTokenRecord): Promise<boolean> => {
+  console.log('[push] upsertPushToken called');
+  console.log('[push] isSupabaseConfigured:', isSupabaseConfigured);
+
   const supabase = getSupabase();
   if (!supabase) {
-    console.warn('[push] Supabase not configured, cannot upsert push token');
+    console.error('[push] FATAL: getSupabase() returned null', {
+      isSupabaseConfigured,
+    });
     return false;
   }
+
+  const payload = {
+    token: record.token,
+    platform: record.platform,
+    city: record.city,
+    price_increase: record.priceIncrease,
+    price_decrease: record.priceDecrease,
+    request_status: record.requestStatus,
+    company_news: record.companyNews,
+    updated_at: new Date().toISOString(),
+  };
+
+  console.log('[push] upsert payload:', {
+    ...payload,
+    token: payload.token.slice(0, 24) + '…',
+  });
+
   try {
-    console.log('[push] upserting token to push_tokens', {
-      tokenPreview: record.token.slice(0, 24) + '…',
-      platform: record.platform,
-      city: record.city,
-      priceIncrease: record.priceIncrease,
-      priceDecrease: record.priceDecrease,
-      requestStatus: record.requestStatus,
-      companyNews: record.companyNews,
-    });
-    const { error } = await supabase
+    const { error, status, statusText } = await supabase
       .from('push_tokens')
-      .upsert(
-        {
-          token: record.token,
-          platform: record.platform,
-          city: record.city,
-          price_increase: record.priceIncrease,
-          price_decrease: record.priceDecrease,
-          request_status: record.requestStatus,
-          company_news: record.companyNews,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'token' },
-      );
+      .upsert(payload, { onConflict: 'token' });
+
+    console.log('[push] Supabase response status:', status, statusText);
+
     if (error) {
-      console.error('[push] Supabase upsert error', {
+      console.error('[push] Supabase upsert FAILED:', {
         message: error.message,
         code: error.code,
         details: error.details,
         hint: error.hint,
+        status,
+        statusText,
       });
       return false;
     }
-    console.log('[push] Token successfully saved to push_tokens');
+
+    console.log('[push] Token successfully saved to push_tokens ✓');
     return true;
   } catch (err) {
-    console.error('[push] Supabase upsert exception', err);
+    const e = err as Error;
+    console.error('[push] upsertPushToken EXCEPTION:', {
+      name: e.name,
+      message: e.message,
+      stack: e.stack,
+    });
     return false;
   }
 };
@@ -67,11 +79,14 @@ export const upsertPushToken = async (record: PushTokenRecord): Promise<boolean>
  */
 export const deletePushToken = async (token: string): Promise<void> => {
   const supabase = getSupabase();
-  if (!supabase) return;
+  if (!supabase) {
+    console.error('[push] deletePushToken: getSupabase() returned null');
+    return;
+  }
   try {
     const { error } = await supabase.from('push_tokens').delete().eq('token', token);
     if (error) {
-      console.error('[push] Supabase delete token error', {
+      console.error('[push] Supabase delete token error:', {
         message: error.message,
         code: error.code,
       });
@@ -79,6 +94,7 @@ export const deletePushToken = async (token: string): Promise<void> => {
     }
     console.log('[push] Token successfully deleted from push_tokens');
   } catch (err) {
-    console.error('[push] Supabase delete token exception', err);
+    const e = err as Error;
+    console.error('[push] Supabase delete token exception:', e.message);
   }
 };

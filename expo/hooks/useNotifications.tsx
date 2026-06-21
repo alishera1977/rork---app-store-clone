@@ -5,8 +5,10 @@ import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import { upsertPushToken } from '@/services/pushTokens';
+import { isSupabaseConfigured } from '@/services/supabase';
 
 const STORAGE_KEY = 'notifications-state-v1';
+const DEFAULT_CITY = 'Барнаул';
 
 export type NotificationCategory =
   | 'priceUp'
@@ -43,19 +45,7 @@ const DEFAULT_STATE: PersistedState = {
   city: null,
 };
 
-interface PushTokenPayload {
-  token: string;
-  platform: 'ios' | 'android';
-  city: string | null;
-  settings: {
-    priceIncrease: boolean;
-    priceDecrease: boolean;
-    requestStatus: boolean;
-    companyNews: boolean;
-  };
-}
-
-const toApiSettings = (prefs: NotificationPrefs): PushTokenPayload['settings'] => ({
+const toApiSettings = (prefs: NotificationPrefs) => ({
   priceIncrease: prefs.priceUp,
   priceDecrease: prefs.priceDown,
   requestStatus: prefs.requestStatus,
@@ -65,58 +55,33 @@ const toApiSettings = (prefs: NotificationPrefs): PushTokenPayload['settings'] =
 /**
  * Отправка токена и настроек в Supabase (таблица push_tokens).
  * Все ошибки логируются в console.error.
- *
- * Дополнительно: если задан EXPO_PUBLIC_PUSH_API_URL — дублируем POST туда,
- * чтобы сохранить совместимость со старым кастомным backend.
  */
-const postPushToken = async (payload: PushTokenPayload): Promise<void> => {
+const postPushToken = async (
+  token: string,
+  platform: 'ios' | 'android',
+  city: string | null,
+  prefs: NotificationPrefs,
+): Promise<boolean> => {
   console.log('[push] === postPushToken START ===');
-  console.log('[push] token:', (payload.token ?? '').slice(0, 24) + '…');
-  console.log('[push] platform:', payload.platform);
-  console.log('[push] city being saved:', payload.city);
-  console.log('[push] settings:', payload.settings);
+  console.log('[push] Supabase configured:', isSupabaseConfigured);
+  console.log('[push] token:', token.slice(0, 24) + '…');
+  console.log('[push] platform:', platform);
+  console.log('[push] city being saved:', city ?? '<null>, using default: ' + DEFAULT_CITY);
+  console.log('[push] settings:', toApiSettings(prefs));
 
-  try {
-    const result = await upsertPushToken({
-      token: payload.token,
-      platform: payload.platform,
-      city: payload.city,
-      priceIncrease: payload.settings.priceIncrease,
-      priceDecrease: payload.settings.priceDecrease,
-      requestStatus: payload.settings.requestStatus,
-      companyNews: payload.settings.companyNews,
-    });
-    console.log('[push] upsertPushToken result:', result);
-  } catch (err) {
-    console.error('[push] upsertPushToken threw exception:', err);
-  }
+  const result = await upsertPushToken({
+    token,
+    platform,
+    city: city ?? DEFAULT_CITY,
+    priceIncrease: prefs.priceUp,
+    priceDecrease: prefs.priceDown,
+    requestStatus: prefs.requestStatus,
+    companyNews: prefs.companyNews,
+  });
 
-  const baseUrl = process.env.EXPO_PUBLIC_PUSH_API_URL;
-  if (!baseUrl) {
-    console.log('[push] No EXPO_PUBLIC_PUSH_API_URL set, skipping legacy backend sync');
-    console.log('[push] === postPushToken END ===');
-    return;
-  }
-  const url = `${baseUrl.replace(/\/$/, '')}/push-token`;
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-    if (!res.ok) {
-      console.error('[push] legacy backend responded with non-ok status', res.status, await res.text().catch(() => ''));
-    } else {
-      console.log('[push] legacy backend sync OK');
-    }
-  } catch (err) {
-    console.error('[push] legacy backend sync failed:', err);
-  }
+  console.log('[push] upsertPushToken result:', result);
   console.log('[push] === postPushToken END ===');
+  return result;
 };
 
 // Настройка обработчика входящих уведомлений (foreground)
@@ -125,30 +90,35 @@ Notifications.setNotificationHandler({
     shouldShowAlert: true,
     shouldPlaySound: true,
     shouldSetBadge: true,
+    shouldShowBanner: true,
+    shouldShowList: true,
   }),
 });
 
 /**
- * Управление push-уведомлениями (только iOS).
+ * Управление push-уведомлениями.
  *
- * Соответствует Apple Guideline 5.1.1: после отказа пользователя
- * не показываем повторных popup, не открываем настройки iOS автоматически,
- * не блокируем экраны.
+ * При старте приложения АГРЕССИВНО:
+ * 1. Проверяет статус разрешений
+ * 2. Если undetermined — запрашивает системное разрешение
+ * 3. После получения разрешения — получает Expo Push Token
+ * 4. Сохраняет токен в Supabase (город по умолчанию "Барнаул")
  *
- * При старте приложения автоматически синхронизирует токен с Supabase.
+ * Соответствует Apple Guideline 5.1.1: после отказа не показываем
+ * повторных popup, не открываем настройки iOS автоматически.
  */
 export const [NotificationsProvider, useNotifications] = createContextHook(() => {
   const [state, setState] = useState<PersistedState>(DEFAULT_STATE);
   const [hydrated, setHydrated] = useState<boolean>(false);
   const [requesting, setRequesting] = useState<boolean>(false);
   const stateRef = useRef<PersistedState>(DEFAULT_STATE);
-  const syncedRef = useRef<boolean>(false);
+  const registeredRef = useRef<boolean>(false);
 
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
 
-  // Загрузка сохранённого состояния из AsyncStorage
+  // ── Загрузка сохранённого состояния из AsyncStorage ──
   useEffect(() => {
     let mounted = true;
 
@@ -165,10 +135,9 @@ export const [NotificationsProvider, useNotifications] = createContextHook(() =>
           };
           setState(next);
           stateRef.current = next;
-          console.log('[push] Loaded persisted state from AsyncStorage:', {
+          console.log('[push] Loaded persisted state:', {
             status: next.status,
             hasToken: !!next.expoPushToken,
-            tokenPreview: next.expoPushToken ? next.expoPushToken.slice(0, 24) + '…' : null,
             city: next.city,
             prefs: next.prefs,
           });
@@ -188,35 +157,115 @@ export const [NotificationsProvider, useNotifications] = createContextHook(() =>
     };
   }, []);
 
-  // Авто-синхронизация токена при старте приложения
+  // ── АГРЕССИВНАЯ РЕГИСТРАЦИЯ ПРИ СТАРТЕ ПРИЛОЖЕНИЯ ──
   useEffect(() => {
     if (!hydrated) return;
-    if (syncedRef.current) return;
+    if (registeredRef.current) return;
+    registeredRef.current = true;
 
-    const current = stateRef.current;
-    if (current.expoPushToken && current.status === 'granted') {
-      console.log('[push] Auto-syncing existing token on app start');
-      syncedRef.current = true;
-      void postPushToken({
-        token: current.expoPushToken,
-        platform: Platform.OS === 'android' ? 'android' : 'ios',
-        city: current.city,
-        settings: toApiSettings(current.prefs),
-      });
-    } else {
-      console.log('[push] No existing token or not granted, skipping auto-sync on start', {
-        hasToken: !!current.expoPushToken,
-        status: current.status,
-      });
-    }
+    const registerOnStartup = async (): Promise<void> => {
+      console.log('[push] === AGRESSIVE STARTUP REGISTRATION ===');
+      console.log('[push] isSupabaseConfigured:', isSupabaseConfigured);
+
+      if (!isSupabaseConfigured) {
+        console.warn('[push] Supabase is NOT configured — abort startup registration');
+        return;
+      }
+
+      // Шаг 1: проверяем текущий статус разрешений
+      const existing = await Notifications.getPermissionsAsync();
+      console.log('[push] Step 1 — current permission status:', existing.status, existing);
+
+      let permStatus = existing.status;
+
+      // Шаг 2: если undetermined — запрашиваем разрешение
+      if (permStatus !== 'granted') {
+        console.log('[push] Step 2 — requesting notification permissions (status:', permStatus, ')');
+        const req = await Notifications.requestPermissionsAsync({
+          ios: { allowAlert: true, allowBadge: true, allowSound: true },
+        });
+        console.log('[push] Step 2 — requestPermissionsAsync result:', req.status, req);
+        permStatus = req.status;
+      } else {
+        console.log('[push] Step 2 — permission already granted, skipping request');
+      }
+
+      // Шаг 3: получаем Expo Push Token если granted и физическое устройство
+      let token: string | null = null;
+      if (permStatus === 'granted') {
+        console.log('[push] Step 3 — permission granted, getting Expo push token');
+        console.log('[push] Step 3 — Device.isDevice:', Device.isDevice, '| model:', Device.modelName);
+
+        // На симуляторе тоже пробуем — для отладки
+        try {
+          const projectId = process.env.EXPO_PUBLIC_PROJECT_ID;
+          console.log('[push] Step 3 — Expo projectId:', projectId);
+          const tokenRes = await Notifications.getExpoPushTokenAsync(
+            projectId ? { projectId } : undefined,
+          );
+          token = tokenRes.data;
+          console.log('[push] Step 3 — Expo push token:', token.slice(0, 24) + '…');
+        } catch (err) {
+          console.error('[push] Step 3 — getExpoPushTokenAsync FAILED:', err);
+        }
+      } else {
+        console.log('[push] Step 3 — permission NOT granted (', permStatus, '), skipping token fetch');
+      }
+
+      // Шаг 4: сохраняем токен в Supabase
+      if (permStatus === 'granted' && token) {
+        console.log('[push] Step 4 — saving token to Supabase');
+        const currentCity = stateRef.current.city;
+        console.log('[push] Step 4 — city from state:', currentCity ?? '<null>, will use default:', DEFAULT_CITY);
+
+        const saved = await postPushToken(
+          token,
+          Platform.OS === 'android' ? 'android' : 'ios',
+          currentCity,
+          stateRef.current.prefs,
+        );
+        console.log('[push] Step 4 — token save result:', saved);
+
+        // Обновляем persisted state с новым токеном
+        const next: PersistedState = {
+          ...stateRef.current,
+          status: 'granted',
+          expoPushToken: token,
+        };
+        persistInternal(next);
+      } else {
+        console.log('[push] Step 4 — skip token save:', {
+          permStatus,
+          hasToken: !!token,
+          reason: !token ? 'no token' : 'not granted',
+        });
+        // Всё равно обновляем статус в persisted state
+        const finalStatus: NotificationPermissionStatus =
+          permStatus === 'granted' ? 'granted' : 'denied';
+        const next: PersistedState = {
+          ...stateRef.current,
+          status: finalStatus,
+          expoPushToken: token ?? stateRef.current.expoPushToken,
+        };
+        persistInternal(next);
+      }
+
+      console.log('[push] === STARTUP REGISTRATION COMPLETE ===');
+    };
+
+    void registerOnStartup();
   }, [hydrated]);
 
-  const persist = useCallback((next: PersistedState): void => {
+  const persistInternal = (next: PersistedState): void => {
     stateRef.current = next;
     setState(next);
     void AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next)).catch((err) => {
       console.error('[push] Failed to persist state to AsyncStorage:', err);
     });
+  };
+
+  const persist = useCallback((next: PersistedState): void => {
+    persistInternal(next);
   }, []);
 
   const sync = useCallback(async (override?: Partial<PersistedState>): Promise<void> => {
@@ -225,13 +274,13 @@ export const [NotificationsProvider, useNotifications] = createContextHook(() =>
       console.log('[push] sync: no token yet, skip');
       return;
     }
-    console.log('[push] sync: sending token to backend, city =', current.city);
-    await postPushToken({
-      token: current.expoPushToken,
-      platform: Platform.OS === 'android' ? 'android' : 'ios',
-      city: current.city,
-      settings: toApiSettings(current.prefs),
-    });
+    console.log('[push] sync: sending token to backend, city =', current.city ?? DEFAULT_CITY);
+    await postPushToken(
+      current.expoPushToken,
+      Platform.OS === 'android' ? 'android' : 'ios',
+      current.city,
+      current.prefs,
+    );
   }, []);
 
   const dismissSoftPrompt = useCallback((): void => {
@@ -244,7 +293,7 @@ export const [NotificationsProvider, useNotifications] = createContextHook(() =>
    * настройки автоматически НЕ открываем (Guideline 5.1.1).
    */
   const requestSystemPermission = useCallback(async (): Promise<NotificationPermissionStatus> => {
-    console.log('[push] === requestSystemPermission START ===');
+    console.log('[push] === requestSystemPermission (manual trigger) ===');
     if (Platform.OS !== 'ios') {
       console.log('[push] Not iOS, setting status to denied');
       persist({ ...stateRef.current, status: 'denied' });
@@ -252,49 +301,37 @@ export const [NotificationsProvider, useNotifications] = createContextHook(() =>
     }
     setRequesting(true);
     try {
-      // Шаг 1: проверяем текущий статус разрешений
       const existing = await Notifications.getPermissionsAsync();
-      console.log('[push] Step 1 - Current permission status:', existing.status, existing);
+      console.log('[push] Manual — current permission status:', existing.status);
 
       let status = existing.status;
 
-      // Шаг 2: запрашиваем разрешение, если ещё не granted
       if (status !== 'granted') {
-        console.log('[push] Step 2 - Requesting notification permissions');
+        console.log('[push] Manual — requesting notification permissions');
         const req = await Notifications.requestPermissionsAsync({
           ios: { allowAlert: true, allowBadge: true, allowSound: true },
         });
-        console.log('[push] Step 2 - requestPermissionsAsync result:', req.status, req);
+        console.log('[push] Manual — requestPermissionsAsync result:', req.status);
         status = req.status;
-      } else {
-        console.log('[push] Step 2 - Permission already granted, skipping request');
       }
 
       const finalStatus: 'granted' | 'denied' = status === 'granted' ? 'granted' : 'denied';
-      console.log('[push] Step 3 - Final permission status:', finalStatus);
+      console.log('[push] Manual — final permission status:', finalStatus);
 
       let token: string | null = null;
 
-      if (finalStatus === 'granted' && Device.isDevice) {
-        console.log('[push] Step 4 - Device is physical, requesting Expo push token');
+      if (finalStatus === 'granted') {
         try {
           const projectId = process.env.EXPO_PUBLIC_PROJECT_ID;
-          console.log('[push] Step 4 - Project ID:', projectId);
+          console.log('[push] Manual — projectId:', projectId);
           const tokenRes = await Notifications.getExpoPushTokenAsync(
             projectId ? { projectId } : undefined,
           );
           token = tokenRes.data;
-          console.log('[push] Step 4 - Expo push token obtained:', token.slice(0, 24) + '…');
+          console.log('[push] Manual — Expo push token:', token.slice(0, 24) + '…');
         } catch (err) {
-          console.error('[push] Step 4 - getExpoPushTokenAsync FAILED:', err);
+          console.error('[push] Manual — getExpoPushTokenAsync FAILED:', err);
         }
-      } else {
-        console.log('[push] Step 4 - Skip token fetch:', {
-          isDevice: Device.isDevice,
-          finalStatus,
-          deviceName: Device.deviceName,
-          modelName: Device.modelName,
-        });
       }
 
       const next: PersistedState = {
@@ -302,38 +339,23 @@ export const [NotificationsProvider, useNotifications] = createContextHook(() =>
         status: finalStatus,
         expoPushToken: token ?? stateRef.current.expoPushToken,
       };
-      console.log('[push] Step 5 - Persisting state:', {
-        status: next.status,
-        hasToken: !!next.expoPushToken,
-        tokenPreview: next.expoPushToken ? next.expoPushToken.slice(0, 24) + '…' : null,
-        city: next.city,
-      });
       persist(next);
 
       if (finalStatus === 'granted' && next.expoPushToken) {
-        console.log('[push] Step 6 - Syncing to backend after permission grant');
-        void sync(next);
-      } else {
-        console.log('[push] Step 6 - Skip sync:', {
-          finalStatus,
-          hasToken: !!next.expoPushToken,
-        });
+        console.log('[push] Manual — syncing to backend');
+        // After the Platform.OS !== 'ios' guard above, we know this is iOS
+        await postPushToken(next.expoPushToken, 'ios', next.city, next.prefs);
       }
 
-      console.log('[push] === requestSystemPermission END, returning:', finalStatus);
       return finalStatus;
     } catch (err) {
-      console.error('[push] requestSystemPermission CRASHED:', err);
-      const next: PersistedState = {
-        ...stateRef.current,
-        status: 'denied' as const,
-      };
-      persist(next);
+      console.error('[push] Manual — requestSystemPermission CRASHED:', err);
+      persist({ ...stateRef.current, status: 'denied' });
       return 'denied';
     } finally {
       setRequesting(false);
     }
-  }, [persist, sync]);
+  }, [persist]);
 
   const setPref = useCallback(
     (key: NotificationCategory, value: boolean): void => {
@@ -341,7 +363,7 @@ export const [NotificationsProvider, useNotifications] = createContextHook(() =>
         ...stateRef.current,
         prefs: { ...stateRef.current.prefs, [key]: value },
       };
-      console.log('[push] setPref:', key, '=', value, '| city =', next.city);
+      console.log('[push] setPref:', key, '=', value, '| city =', next.city ?? DEFAULT_CITY);
       persist(next);
       void sync(next);
     },
@@ -368,15 +390,6 @@ export const [NotificationsProvider, useNotifications] = createContextHook(() =>
     () => hydrated && Platform.OS === 'ios' && state.status === 'undetermined',
     [hydrated, state.status],
   );
-
-  console.log('[push] useNotifications render:', {
-    hydrated,
-    requesting,
-    status: state.status,
-    hasToken: !!state.expoPushToken,
-    city: state.city,
-    shouldShowSoftPrompt,
-  });
 
   return {
     hydrated,

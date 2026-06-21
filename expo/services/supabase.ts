@@ -6,6 +6,8 @@ const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
 
 export const isSupabaseConfigured: boolean = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 
+console.log('[supabase] Configured:', isSupabaseConfigured, '| URL:', SUPABASE_URL ? SUPABASE_URL.slice(0, 50) + '…' : '<empty>', '| Key present:', Boolean(SUPABASE_ANON_KEY));
+
 let client: SupabaseClient | null = null;
 
 /**
