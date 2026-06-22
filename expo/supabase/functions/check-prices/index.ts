@@ -8,6 +8,10 @@
 //      - понижение → пользователям с price_decrease = true
 //   4. При первом сохранении цен (нет снапшотов для города) push НЕ отправляется.
 //   5. Обновляет таблицу `price_snapshots` после проверки.
+//   6. Сохраняет ежедневную историю цен в таблицу `price_history`.
+//   7. Анализирует, какой металл выгоднее всего сдавать сегодня.
+//   8. Отправляет одно «умное» уведомление на город (только price_increase = true).
+//   9. Записывает факт отправки в `smart_price_notifications` (защита от повторов).
 //
 // Соответствует App Store Guideline 5.1.1: push идёт только подписчикам с
 // явно включённым тоггл-ом соответствующего типа уведомления.
@@ -20,10 +24,10 @@
 //     -H "Authorization: Bearer <SUPABASE_ANON_KEY>" \
 //     https://<project-ref>.supabase.co/functions/v1/check-prices
 //
-// Cron (каждые 30 минут) — выполнить в SQL Editor один раз:
+// Cron (раз в день в 9:00 утра по Москве, UTC+3 → 6:00 UTC) — выполнить в SQL Editor один раз:
 //   select cron.schedule(
-//     'check-prices-every-30m',
-//     '*/30 * * * *',
+//     'check-prices-daily-9am',
+//     '0 6 * * *',
 //     $$ select net.http_post(
 //          url := 'https://<project-ref>.supabase.co/functions/v1/check-prices',
 //          headers := jsonb_build_object(
@@ -329,6 +333,278 @@ const dispatchNotifications = async (
   return { pushedIncrease, pushedDecrease };
 };
 
+// ═══════════════════════════════════════════════════════════════
+// Smart Price Analysis — «умное» уведомление (одно на город в день)
+// ═══════════════════════════════════════════════════════════════
+
+const SMART_TITLE = 'Промметпласт';
+const MIN_PRICE_DIFF_RUB = 10;
+const MIN_PERCENT_DIFF = 2;
+const MIN_7DAY_EXCESS_PCT = 2;
+
+const HIGH_DEMAND_NAMES = ['медь', 'copper', 'алюминий', 'aluminum', 'латунь', 'brass'];
+
+const isHighDemand = (name: string): boolean =>
+  HIGH_DEMAND_NAMES.some((kw) => name.toLowerCase().includes(kw));
+
+const getCategoryBonus = (name: string, category: string): number => {
+  if (isHighDemand(name)) return 1.5;
+  if (category === 'ferrous') return 1.3;
+  return 1.0;
+};
+
+const avgSafe = (vals: number[]): number | null => {
+  const f = vals.filter((v) => typeof v === 'number' && Number.isFinite(v) && v > 0);
+  if (f.length === 0) return null;
+  return f.reduce((a, b) => a + b, 0) / f.length;
+};
+
+/** Сгенерировать текст умного уведомления. */
+const makeSmartBody = (metalName: string, priceDiff: number | null, percentDiff: number | null, above7Day: boolean, todayPrice: number, sevenDayAvg: number | null): string => {
+  if (priceDiff !== null && priceDiff >= MIN_PRICE_DIFF_RUB) {
+    return `Сегодня выгодно сдавать ${metalName.toLowerCase()}: +${Math.round(priceDiff)} ₽ за кг`;
+  }
+  if (above7Day && sevenDayAvg !== null && todayPrice > sevenDayAvg) {
+    return `${metalName} сегодня выше средней цены за неделю`;
+  }
+  if (percentDiff !== null && percentDiff >= MIN_PERCENT_DIFF) {
+    return `Цена на ${metalName.toLowerCase()} выросла на ${Math.round(percentDiff)}% — сегодня хороший день для сдачи`;
+  }
+  return `Цена на ${metalName.toLowerCase()} выросла — сегодня хороший день для сдачи`;
+};
+
+/**
+ * Сохранить price_history из текущих цен.
+ *
+ * ВАЖНО: вызывается ПОСЛЕ compareCity, которая уже обновила price_snapshots
+ * (current_price = сегодня, previous_price = вчера). Поэтому читаем previous_price
+ * из снапшотов — это реальная вчерашняя цена.
+ */
+const savePriceHistory = async (
+  supabase: SupabaseClient,
+  city: string,
+  prices: PriceInput[],
+  categoryMap: Map<string, 'ferrous' | 'non-ferrous'>,
+): Promise<number> => {
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Загружаем previous_price из снапшотов (это вчерашняя цена, compareCity уже сохранила её)
+  const { data: snapshots } = await supabase
+    .from('price_snapshots')
+    .select('metal_name, previous_price')
+    .eq('city', city);
+
+  const snapPrevMap = new Map<string, number | null>();
+  (snapshots ?? []).forEach((s: { metal_name: string; previous_price: number | null }) => {
+    const val = s.previous_price !== null ? Number(s.previous_price) : null;
+    if (val !== null && Number.isFinite(val) && val > 0) {
+      snapPrevMap.set(s.metal_name, val);
+    }
+  });
+
+  const rows = prices.map((p) => {
+    const cat = categoryMap.get(p.metalName) ?? 'non-ferrous';
+    const currentPrice = p.currentPrice;
+    const previousPrice = snapPrevMap.get(p.metalName) ?? null;
+    const priceDiff = previousPrice !== null ? currentPrice - previousPrice : null;
+    const percentDiff =
+      previousPrice !== null && previousPrice > 0
+        ? ((currentPrice - previousPrice) / previousPrice) * 100
+        : null;
+
+    return {
+      city,
+      metal_name: p.metalName,
+      category: cat,
+      current_price: currentPrice,
+      previous_price: previousPrice,
+      price_diff: priceDiff,
+      percent_diff: percentDiff,
+      date: today,
+    };
+  });
+
+  const { error } = await supabase
+    .from('price_history')
+    .upsert(rows, { onConflict: 'city,metal_name,date' });
+
+  if (error) {
+    console.log('[check-prices] price_history upsert failed', city, error.message);
+    return 0;
+  }
+  console.log('[check-prices] price_history saved:', city, rows.length, 'rows');
+  return rows.length;
+};
+
+interface MetalAnalysis {
+  metalName: string;
+  category: 'ferrous' | 'non-ferrous';
+  todayPrice: number;
+  yesterdayPrice: number | null;
+  priceDiff: number | null;
+  percentDiff: number | null;
+  sevenDayAvg: number | null;
+  above7Day: boolean;
+  isGoodToSell: boolean;
+  score: number;
+}
+
+/** Проанализировать город и выбрать лучший металл для умного уведомления. */
+const analyzeCitySmart = async (
+  supabase: SupabaseClient,
+  city: string,
+  prices: PriceInput[],
+  categoryMap: Map<string, 'ferrous' | 'non-ferrous'>,
+): Promise<{ best: MetalAnalysis | null; all: MetalAnalysis[] }> => {
+  // Загружаем историю за 30 дней
+  const since30 = new Date();
+  since30.setDate(since30.getDate() - 30);
+  const since30Str = since30.toISOString().slice(0, 10);
+
+  const { data: histRows, error: histErr } = await supabase
+    .from('price_history')
+    .select('metal_name, current_price, date')
+    .eq('city', city)
+    .gte('date', since30Str)
+    .order('date', { ascending: false });
+
+  if (histErr) {
+    console.log('[check-prices] smart analysis history select failed', city, histErr.message);
+    return { best: null, all: [] };
+  }
+
+  // Группируем историю по metal_name
+  const histByMetal = new Map<string, { current_price: number; date: string }[]>();
+  (histRows ?? []).forEach((r: { metal_name: string; current_price: number; date: string }) => {
+    const list = histByMetal.get(r.metal_name) ?? [];
+    list.push(r);
+    histByMetal.set(r.metal_name, list);
+  });
+
+  const analyses: MetalAnalysis[] = [];
+
+  for (const p of prices) {
+    const history = histByMetal.get(p.metalName) ?? [];
+    const cat = categoryMap.get(p.metalName) ?? 'non-ferrous';
+    const todayPrice = p.currentPrice;
+
+    // Вчерашняя цена: самая свежая запись в истории (не сегодня)
+    const pastRows = history.filter((r) => r.current_price !== todayPrice);
+    const yesterdayPrice = pastRows.length > 0 ? pastRows[0].current_price : null;
+
+    const priceDiff = yesterdayPrice !== null ? todayPrice - yesterdayPrice : null;
+    const percentDiff =
+      yesterdayPrice !== null && yesterdayPrice > 0
+        ? ((todayPrice - yesterdayPrice) / yesterdayPrice) * 100
+        : null;
+
+    // 7-дневная средняя
+    const last7 = pastRows.slice(0, 7).map((r) => r.current_price);
+    const sevenDayAvg = avgSafe(last7);
+
+    const above7Day =
+      sevenDayAvg !== null && todayPrice > sevenDayAvg * (1 + MIN_7DAY_EXCESS_PCT / 100);
+
+    // Условия «хорошо для продажи»
+    const priceIncreased = yesterdayPrice !== null && todayPrice > yesterdayPrice;
+    const hasMeaningfulDiff =
+      (priceDiff !== null && priceDiff >= MIN_PRICE_DIFF_RUB) ||
+      (percentDiff !== null && percentDiff >= MIN_PERCENT_DIFF) ||
+      above7Day;
+
+    const isGoodToSell = priceIncreased && hasMeaningfulDiff;
+
+    // Скоринг
+    let score = 0;
+    if (priceDiff !== null && priceDiff > 0) score += priceDiff;
+    if (percentDiff !== null && percentDiff > 0) score += percentDiff * 5;
+    if (above7Day && sevenDayAvg !== null) {
+      score += ((todayPrice - sevenDayAvg) / sevenDayAvg) * 100 * 3;
+    }
+    score *= getCategoryBonus(p.metalName, cat);
+
+    analyses.push({
+      metalName: p.metalName,
+      category: cat,
+      todayPrice,
+      yesterdayPrice,
+      priceDiff,
+      percentDiff,
+      sevenDayAvg,
+      above7Day,
+      isGoodToSell,
+      score,
+    });
+  }
+
+  analyses.sort((a, b) => b.score - a.score);
+  const best = analyses.find((a) => a.isGoodToSell) ?? null;
+
+  return { best, all: analyses };
+};
+
+/** Отправить умное уведомление для города (если ещё не отправлено сегодня). */
+const trySendSmartNotification = async (
+  supabase: SupabaseClient,
+  city: string,
+  best: MetalAnalysis,
+): Promise<{ sent: boolean; tokens: number; body: string }> => {
+  // Проверка: не отправлено ли уже сегодня
+  const today = new Date().toISOString().slice(0, 10);
+  const { data: existing } = await supabase
+    .from('smart_price_notifications')
+    .select('id')
+    .eq('city', city)
+    .eq('date', today)
+    .limit(1);
+
+  if (existing && existing.length > 0) {
+    console.log('[check-prices] smart notif already sent today for', city);
+    return { sent: false, tokens: 0, body: '' };
+  }
+
+  const body = makeSmartBody(
+    best.metalName,
+    best.priceDiff,
+    best.percentDiff,
+    best.above7Day,
+    best.todayPrice,
+    best.sevenDayAvg,
+  );
+
+  // Токены: city + price_increase = true
+  const tokens = await fetchTokensFor(supabase, city, 'price_increase');
+  if (tokens.length === 0) {
+    console.log('[check-prices] smart notif: no tokens for', city);
+    return { sent: false, tokens: 0, body };
+  }
+
+  await sendExpoPush(supabase, tokens, SMART_TITLE, body, {
+    type: 'smart_price',
+    city,
+    metalName: best.metalName,
+    priceDiff: best.priceDiff,
+    percentDiff: best.percentDiff,
+  });
+
+  // Запись факта отправки
+  const { error: insErr } = await supabase.from('smart_price_notifications').insert({
+    city,
+    metal_name: best.metalName,
+    date: today,
+    title: SMART_TITLE,
+    body,
+    score: best.score,
+  });
+
+  if (insErr) {
+    console.log('[check-prices] smart notif insert failed', city, insErr.message);
+  }
+
+  console.log('[check-prices] smart notif SENT:', city, best.metalName, '→', tokens.length, 'tokens');
+  return { sent: true, tokens: tokens.length, body };
+};
+
 Deno.serve(async (req) => {
   const startedAt = Date.now();
   try {
@@ -347,6 +623,18 @@ Deno.serve(async (req) => {
 
     const pricesApiUrl = Deno.env.get('PRICES_API_URL') ?? DEFAULT_PRICES_API_URL;
     const raw = await fetchPrices(pricesApiUrl);
+
+    // Строим карту категорий из сырых данных
+    const categoryMap = new Map<string, 'ferrous' | 'non-ferrous'>();
+    for (const [, cityData] of Object.entries(raw)) {
+      for (const item of cityData.nonFerrous ?? []) {
+        categoryMap.set(item.name, 'non-ferrous');
+      }
+      for (const item of cityData.ferrous ?? []) {
+        if (!isJunkEntry(item.name)) categoryMap.set(item.name, 'ferrous');
+      }
+    }
+
     const byCity = groupPricesByCity(raw);
 
     const report: Array<{
@@ -356,10 +644,13 @@ Deno.serve(async (req) => {
       isFirstRun: boolean;
       pushedIncrease: number;
       pushedDecrease: number;
+      historySaved: number;
+      smartNotif: { sent: boolean; tokens: number; metal: string | null; body: string } | null;
     }> = [];
 
     for (const [city, prices] of Object.entries(byCity)) {
       const { changes, isFirstRun } = await compareCity(supabase, city, prices);
+
       let pushedIncrease = 0;
       let pushedDecrease = 0;
       if (!isFirstRun && changes.length > 0) {
@@ -367,6 +658,23 @@ Deno.serve(async (req) => {
         pushedIncrease = res.pushedIncrease;
         pushedDecrease = res.pushedDecrease;
       }
+
+      // Сохраняем price_history
+      const historySaved = await savePriceHistory(supabase, city, prices, categoryMap);
+
+      // Умный анализ
+      let smartNotif: { sent: boolean; tokens: number; metal: string | null; body: string } | null = null;
+      const { best } = await analyzeCitySmart(supabase, city, prices, categoryMap);
+      if (best) {
+        const result = await trySendSmartNotification(supabase, city, best);
+        smartNotif = {
+          sent: result.sent,
+          tokens: result.tokens,
+          metal: result.sent ? best.metalName : null,
+          body: result.body || '',
+        };
+      }
+
       report.push({
         city,
         total: prices.length,
@@ -374,6 +682,8 @@ Deno.serve(async (req) => {
         isFirstRun,
         pushedIncrease,
         pushedDecrease,
+        historySaved,
+        smartNotif,
       });
     }
 

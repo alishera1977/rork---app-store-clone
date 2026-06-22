@@ -17,6 +17,11 @@ import { upsertPushToken } from '@/services/pushTokens';
 import { useNotifications } from '@/hooks/useNotifications';
 import { useAppTheme } from '@/hooks/useAppTheme';
 import type { AppColors } from '@/constants/colors';
+import {
+  analyzeCityPrices,
+  sendSmartNotification,
+  type SmartAnalysisResult,
+} from '@/services/smartPriceAnalysis';
 
 type TestState = {
   running: boolean;
@@ -44,6 +49,32 @@ const INITIAL_TEST: TestState = {
   finished: false,
 };
 
+type SmartTestState = {
+  running: boolean;
+  step: string;
+  city: string;
+  analysis: SmartAnalysisResult | null;
+  bestMetalName: string | null;
+  bestScore: number | null;
+  bestReason: string | null;
+  sendResult: string;
+  sendError: string;
+  finished: boolean;
+};
+
+const INITIAL_SMART: SmartTestState = {
+  running: false,
+  step: '',
+  city: '',
+  analysis: null,
+  bestMetalName: null,
+  bestScore: null,
+  bestReason: null,
+  sendResult: '',
+  sendError: '',
+  finished: false,
+};
+
 const DEFAULT_CITY = 'Барнаул';
 
 export default function PushDebugPanel() {
@@ -51,6 +82,7 @@ export default function PushDebugPanel() {
   const styles = createStyles(Colors);
   const notif = useNotifications();
   const [test, setTest] = useState<TestState>(INITIAL_TEST);
+  const [smartTest, setSmartTest] = useState<SmartTestState>(INITIAL_SMART);
   const [expanded, setExpanded] = useState<boolean>(false);
 
   // ── Read env at render time ──
@@ -218,6 +250,93 @@ export default function PushDebugPanel() {
     }
   }, [hasUrl, hasKey, supabaseUrl, notif.city, notif.prefs]);
 
+  // ── "Test smart price notification" button ──
+  const handleSmartTest = useCallback(async () => {
+    const st: SmartTestState = { ...INITIAL_SMART, running: true };
+    setSmartTest(st);
+
+    const update = (patch: Partial<SmartTestState>) => {
+      stCopy = { ...stCopy, ...patch };
+      setSmartTest(stCopy);
+    };
+    let stCopy = { ...st };
+
+    const city = notif.city ?? DEFAULT_CITY;
+    update({ step: `Анализ цен для города «${city}»…`, city });
+
+    if (!hasUrl || !hasKey) {
+      update({
+        step: '',
+        sendError: 'Supabase не настроен.',
+        running: false,
+        finished: true,
+      });
+      return;
+    }
+
+    // Step 1: run analysis
+    update({ step: 'Загрузка данных из Supabase и анализ…' });
+    try {
+      const analysis = await analyzeCityPrices(city);
+      update({ analysis });
+
+      if (analysis.alreadySentToday) {
+        update({
+          step: '',
+          sendError: 'Умное уведомление уже отправлено сегодня для этого города.',
+          running: false,
+          finished: true,
+        });
+        return;
+      }
+
+      if (!analysis.bestMetal) {
+        update({
+          step: '',
+          sendError: analysis.message || 'Нет подходящих металлов.',
+          running: false,
+          finished: true,
+        });
+        return;
+      }
+
+      const best = analysis.bestMetal;
+      update({
+        bestMetalName: best.metalName,
+        bestScore: best.score,
+        bestReason: best.reason,
+        step: `Выбран ${best.metalName} (score: ${best.score.toFixed(1)}). Отправка…`,
+      });
+
+      // Step 2: send push
+      const result = await sendSmartNotification(city);
+
+      if (result.success) {
+        update({
+          sendResult: `✅ Отправлено: «${result.body}» → ${result.tokensSent} токенов`,
+          step: '',
+          running: false,
+          finished: true,
+        });
+      } else {
+        update({
+          sendError: `Отправка не выполнена: ${result.error ?? 'неизвестная ошибка'}`,
+          step: '',
+          running: false,
+          finished: true,
+        });
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      update({
+        sendError: `Исключение: ${msg}`,
+        step: '',
+        running: false,
+        finished: true,
+      });
+    }
+  }, [hasUrl, hasKey, notif.city]);
+
   if (!expanded) {
     return (
       <TouchableOpacity
@@ -327,6 +446,64 @@ export default function PushDebugPanel() {
           </View>
         ) : null}
 
+        {/* ── Smart Notification Test Button ── */}
+        <TouchableOpacity
+          style={[styles.smartButton, smartTest.running && styles.testButtonDisabled]}
+          onPress={handleSmartTest}
+          disabled={smartTest.running}
+          activeOpacity={0.7}
+        >
+          {smartTest.running ? (
+            <ActivityIndicator size="small" color={Colors.bg} />
+          ) : (
+            <Text style={styles.testButtonText}>🧠 Test smart price notification</Text>
+          )}
+        </TouchableOpacity>
+
+        {/* ── Smart Test Results ── */}
+        {smartTest.finished || smartTest.running ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>
+              {smartTest.running ? 'Выполняется…' : 'Результат умного анализа'}
+            </Text>
+
+            {smartTest.step ? <Row label="Шаг" value={smartTest.step} styles={styles} /> : null}
+            {smartTest.city ? <Row label="Город" value={smartTest.city} styles={styles} /> : null}
+            {smartTest.bestMetalName ? <Row label="Выбранный металл" value={smartTest.bestMetalName} styles={styles} /> : null}
+            {smartTest.bestScore !== null ? <Row label="Score" value={smartTest.bestScore.toFixed(1)} styles={styles} /> : null}
+            {smartTest.bestReason ? <Row label="Причина" value={smartTest.bestReason} styles={styles} /> : null}
+
+            {smartTest.analysis && smartTest.analysis.allMetals.length > 0 ? (
+              <View style={styles.payloadBox}>
+                <Text style={styles.payloadLabel}>Все металлы (топ-10 по скору):</Text>
+                {smartTest.analysis.allMetals.slice(0, 10).map((m, i) => (
+                  <Text key={m.metalName} style={styles.payloadText}>
+                    {i + 1}. {m.metalName} — score: {m.score.toFixed(1)}
+                    {m.isGoodToSell ? ' ✅' : ''}
+                    {m.priceDiff !== null ? ` | Δ: +${Math.round(m.priceDiff)}₽` : ''}
+                    {m.above7Day ? ' | выше 7д' : ''}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
+
+            {smartTest.sendResult ? (
+              <Row
+                label="Результат отправки"
+                value={smartTest.sendResult}
+                styles={styles}
+              />
+            ) : null}
+
+            {smartTest.sendError ? (
+              <View style={styles.errorBox}>
+                <Text style={styles.errorTitle}>❌ Ошибка:</Text>
+                <Text style={styles.errorText} selectable>{smartTest.sendError}</Text>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+
         {/* ── Quick links ── */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Быстрые действия</Text>
@@ -390,7 +567,7 @@ const createStyles = (Colors: AppColors) =>
       overflow: 'hidden',
     },
     scroll: {
-      maxHeight: 500,
+      maxHeight: 600,
     },
     scrollContent: {
       padding: 14,
@@ -475,6 +652,13 @@ const createStyles = (Colors: AppColors) =>
     },
     testButton: {
       backgroundColor: '#3B82F6',
+      borderRadius: 10,
+      paddingVertical: 12,
+      alignItems: 'center',
+      marginBottom: 16,
+    },
+    smartButton: {
+      backgroundColor: '#10B981',
       borderRadius: 10,
       paddingVertical: 12,
       alignItems: 'center',
