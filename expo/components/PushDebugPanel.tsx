@@ -55,7 +55,9 @@ export default function PushDebugPanel() {
   // ── Read env at render time ──
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
   const supabaseKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
-  const projectId = process.env.EXPO_PUBLIC_PROJECT_ID ?? '';
+  // EXPO_PUBLIC_PROJECT_ID = Rork project ID (pd7uly1nv93e1xl7wpp6l) — NOT a valid Expo EAS UUID.
+  // We do NOT pass it to getExpoPushTokenAsync. Expo SDK 54 auto-detects project context.
+  const rorkProjectId = process.env.EXPO_PUBLIC_PROJECT_ID ?? '';
 
   const hasUrl = Boolean(supabaseUrl);
   const hasKey = Boolean(supabaseKey);
@@ -110,16 +112,16 @@ export default function PushDebugPanel() {
       return;
     }
 
-    // Step 3 — get Expo push token
+    // Step 3 — get Expo push token (no projectId — SDK 54 auto-detects)
     update({ step: 'Получение Expo Push Token…' });
-    update({ projectId });
+    update({ projectId: 'auto-detect (SDK 54)' });
     try {
-      const tokenRes = await Notifications.getExpoPushTokenAsync(
-        projectId ? { projectId } : undefined,
-      );
+      const tokenRes = await Notifications.getExpoPushTokenAsync();
       update({ pushToken: tokenRes.data });
+      console.log('[debug] getExpoPushTokenAsync success, type:', tokenRes.type);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
+      console.error('[debug] getExpoPushTokenAsync FAILED:', msg);
       update({
         step: '',
         saveError: `getExpoPushTokenAsync FAILED: ${msg}`,
@@ -212,7 +214,7 @@ export default function PushDebugPanel() {
         finished: true,
       });
     }
-  }, [hasUrl, hasKey, projectId, supabaseUrl, notif.city, notif.prefs]);
+  }, [hasUrl, hasKey, supabaseUrl, notif.city, notif.prefs]);
 
   if (!expanded) {
     return (
@@ -251,7 +253,8 @@ export default function PushDebugPanel() {
           <Row label="Supabase Key задан" value={hasKey ? '✅ true' : '❌ false'} styles={styles} error={!hasKey} />
           <Row label="isSupabaseConfigured" value={isSupabaseConfigured ? 'true' : 'false'} styles={styles} error={!isSupabaseConfigured} />
           <Row label="getSupabase()" value={supabaseReady ? `✅ client created` : '❌ NULL'} styles={styles} error={!supabaseReady} />
-          <Row label="Expo Project ID" value={projectId || '❌ не задан'} styles={styles} error={!projectId} />
+          <Row label="Rork Project ID (env)" value={rorkProjectId || '❌ не задан'} styles={styles} />
+          <Row label="Expo push project" value="auto-detected by SDK" styles={styles} />
           {hasUrl && (
             <Row label="Supabase URL" value={supabaseUrl.length > 50 ? supabaseUrl.slice(0, 50) + '…' : supabaseUrl} styles={styles} />
           )}

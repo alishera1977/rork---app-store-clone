@@ -196,15 +196,14 @@ export const [NotificationsProvider, useNotifications] = createContextHook(() =>
         console.log('[push] Step 3 — permission granted, getting Expo push token');
         console.log('[push] Step 3 — Device.isDevice:', Device.isDevice, '| model:', Device.modelName);
 
-        // На симуляторе тоже пробуем — для отладки
         try {
-          const projectId = process.env.EXPO_PUBLIC_PROJECT_ID;
-          console.log('[push] Step 3 — Expo projectId:', projectId);
-          const tokenRes = await Notifications.getExpoPushTokenAsync(
-            projectId ? { projectId } : undefined,
-          );
+          // Expo SDK 54 auto-resolves project context — no projectId needed
+          console.log('[push] Step 3 — calling getExpoPushTokenAsync() without projectId');
+          console.log('[push] Step 3 — using Expo SDK auto-detection for project context');
+          const tokenRes = await Notifications.getExpoPushTokenAsync();
           token = tokenRes.data;
           console.log('[push] Step 3 — Expo push token:', token.slice(0, 24) + '…');
+          console.log('[push] Step 3 — token type:', tokenRes.type);
         } catch (err) {
           console.error('[push] Step 3 — getExpoPushTokenAsync FAILED:', err);
         }
@@ -322,13 +321,11 @@ export const [NotificationsProvider, useNotifications] = createContextHook(() =>
 
       if (finalStatus === 'granted') {
         try {
-          const projectId = process.env.EXPO_PUBLIC_PROJECT_ID;
-          console.log('[push] Manual — projectId:', projectId);
-          const tokenRes = await Notifications.getExpoPushTokenAsync(
-            projectId ? { projectId } : undefined,
-          );
+          console.log('[push] Manual — calling getExpoPushTokenAsync() without projectId');
+          const tokenRes = await Notifications.getExpoPushTokenAsync();
           token = tokenRes.data;
           console.log('[push] Manual — Expo push token:', token.slice(0, 24) + '…');
+          console.log('[push] Manual — token type:', tokenRes.type);
         } catch (err) {
           console.error('[push] Manual — getExpoPushTokenAsync FAILED:', err);
         }
