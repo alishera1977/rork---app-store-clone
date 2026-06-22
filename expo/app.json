@@ -51,6 +51,11 @@
         }
       ]
     ],
+    "extra": {
+      "eas": {
+        "projectId": "YOUR_EXPO_EAS_PROJECT_UUID_HERE"
+      }
+    },
     "experiments": {
       "typedRoutes": true
     }

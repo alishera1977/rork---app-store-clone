@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import createContextHook from '@nkzw/create-context-hook';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import { upsertPushToken } from '@/services/pushTokens';
@@ -197,10 +198,12 @@ export const [NotificationsProvider, useNotifications] = createContextHook(() =>
         console.log('[push] Step 3 — Device.isDevice:', Device.isDevice, '| model:', Device.modelName);
 
         try {
-          // Expo SDK 54 auto-resolves project context — no projectId needed
-          console.log('[push] Step 3 — calling getExpoPushTokenAsync() without projectId');
-          console.log('[push] Step 3 — using Expo SDK auto-detection for project context');
-          const tokenRes = await Notifications.getExpoPushTokenAsync();
+          const projectId = Constants.expoConfig?.extra?.eas?.projectId as string | undefined;
+          console.log('[push] Step 3 — projectId from Constants.expoConfig.extra.eas.projectId:', projectId);
+          if (!projectId) {
+            console.error('[push] Step 3 — NO projectId found in Constants.expoConfig.extra.eas.projectId. Push token will fail.');
+          }
+          const tokenRes = await Notifications.getExpoPushTokenAsync({ projectId });
           token = tokenRes.data;
           console.log('[push] Step 3 — Expo push token:', token.slice(0, 24) + '…');
           console.log('[push] Step 3 — token type:', tokenRes.type);
@@ -321,8 +324,9 @@ export const [NotificationsProvider, useNotifications] = createContextHook(() =>
 
       if (finalStatus === 'granted') {
         try {
-          console.log('[push] Manual — calling getExpoPushTokenAsync() without projectId');
-          const tokenRes = await Notifications.getExpoPushTokenAsync();
+          const projectId = Constants.expoConfig?.extra?.eas?.projectId as string | undefined;
+          console.log('[push] Manual — projectId from Constants:', projectId);
+          const tokenRes = await Notifications.getExpoPushTokenAsync({ projectId });
           token = tokenRes.data;
           console.log('[push] Manual — Expo push token:', token.slice(0, 24) + '…');
           console.log('[push] Manual — token type:', tokenRes.type);

@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Platform,
 } from 'react-native';
+import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 
@@ -55,8 +56,8 @@ export default function PushDebugPanel() {
   // ── Read env at render time ──
   const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
   const supabaseKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
-  // EXPO_PUBLIC_PROJECT_ID = Rork project ID (pd7uly1nv93e1xl7wpp6l) — NOT a valid Expo EAS UUID.
-  // We do NOT pass it to getExpoPushTokenAsync. Expo SDK 54 auto-detects project context.
+  // Real EAS projectId from app.json → expo.extra.eas.projectId (NOT the Rork project ID).
+  const easProjectId = (Constants.expoConfig?.extra?.eas?.projectId as string) ?? '';
   const rorkProjectId = process.env.EXPO_PUBLIC_PROJECT_ID ?? '';
 
   const hasUrl = Boolean(supabaseUrl);
@@ -112,11 +113,12 @@ export default function PushDebugPanel() {
       return;
     }
 
-    // Step 3 — get Expo push token (no projectId — SDK 54 auto-detects)
+    // Step 3 — get Expo push token with explicit projectId from app.json
     update({ step: 'Получение Expo Push Token…' });
-    update({ projectId: 'auto-detect (SDK 54)' });
+    const projectId = Constants.expoConfig?.extra?.eas?.projectId as string | undefined;
+    update({ projectId: projectId ?? '❌ не задан в app.json → extra.eas.projectId' });
     try {
-      const tokenRes = await Notifications.getExpoPushTokenAsync();
+      const tokenRes = await Notifications.getExpoPushTokenAsync({ projectId });
       update({ pushToken: tokenRes.data });
       console.log('[debug] getExpoPushTokenAsync success, type:', tokenRes.type);
     } catch (err: unknown) {
@@ -254,7 +256,7 @@ export default function PushDebugPanel() {
           <Row label="isSupabaseConfigured" value={isSupabaseConfigured ? 'true' : 'false'} styles={styles} error={!isSupabaseConfigured} />
           <Row label="getSupabase()" value={supabaseReady ? `✅ client created` : '❌ NULL'} styles={styles} error={!supabaseReady} />
           <Row label="Rork Project ID (env)" value={rorkProjectId || '❌ не задан'} styles={styles} />
-          <Row label="Expo push project" value="auto-detected by SDK" styles={styles} />
+          <Row label="EAS projectId (app.json)" value={easProjectId || '❌ не задан'} styles={styles} error={!easProjectId} />
           {hasUrl && (
             <Row label="Supabase URL" value={supabaseUrl.length > 50 ? supabaseUrl.slice(0, 50) + '…' : supabaseUrl} styles={styles} />
           )}
