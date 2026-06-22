@@ -53,7 +53,7 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "YOUR_EXPO_EAS_PROJECT_UUID_HERE"
+        "projectId": "d0ca44ab-ce15-445a-8e5c-f4fc52adbcb1"
       }
     },
     "experiments": {
