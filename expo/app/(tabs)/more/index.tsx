@@ -36,6 +36,7 @@ import { AppColors } from '@/constants/colors';
 import { useAppTheme } from '@/hooks/useAppTheme';
 import { fetchVacancies, fetchSettings } from '@/services/api';
 import { useNotifications, NotificationCategory } from '@/hooks/useNotifications';
+import PushDebugPanel from '@/components/PushDebugPanel';
 
 export default function MoreScreen() {
   const { colors: Colors, themeMode, setThemeMode } = useAppTheme();
@@ -344,6 +345,11 @@ export default function MoreScreen() {
               </Text>
             )}
           </>
+        )}
+
+        {/* ── Debug Panel (временный) ── */}
+        {Platform.OS === 'ios' && (
+          <PushDebugPanel />
         )}
 
         <View style={styles.sectionLabel}>
