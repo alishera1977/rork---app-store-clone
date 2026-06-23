@@ -3,7 +3,7 @@ import { getSupabase, isSupabaseConfigured } from './supabase';
 export interface PushTokenRecord {
   token: string;
   platform: 'ios' | 'android';
-  city: string | null;
+  cities: string[];
   priceIncrease: boolean;
   priceDecrease: boolean;
   requestStatus: boolean;
@@ -13,6 +13,7 @@ export interface PushTokenRecord {
 /**
  * Upsert push token + настройки в Supabase (таблица push_tokens).
  * Конфликт разрешаем по token. Все ошибки логируются в console.error.
+ * Если cities пустой — подставляем город по умолчанию, чтобы не было пустого выбора.
  */
 export const upsertPushToken = async (record: PushTokenRecord): Promise<boolean> => {
   console.log('[push] upsertPushToken called');
@@ -26,10 +27,14 @@ export const upsertPushToken = async (record: PushTokenRecord): Promise<boolean>
     return false;
   }
 
+  // Безопасность: если cities пуст, подставляем Барнаул
+  const cities =
+    record.cities.length > 0 ? record.cities : ['Барнаул'];
+
   const payload = {
     token: record.token,
     platform: record.platform,
-    city: record.city,
+    cities,
     price_increase: record.priceIncrease,
     price_decrease: record.priceDecrease,
     request_status: record.requestStatus,

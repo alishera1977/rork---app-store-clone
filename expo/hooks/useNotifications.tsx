@@ -8,8 +8,22 @@ import * as Device from 'expo-device';
 import { upsertPushToken } from '@/services/pushTokens';
 import { isSupabaseConfigured } from '@/services/supabase';
 
-const STORAGE_KEY = 'notifications-state-v1';
-const DEFAULT_CITY = 'Барнаул';
+const STORAGE_KEY = 'notifications-state-v2';
+
+/** Полный список городов (9 шт.) — используется как fallback. */
+export const ALL_CITIES: string[] = [
+  'Барнаул',
+  'Заринск',
+  'Рубцовск',
+  'Алейск',
+  'Новоалтайск',
+  'Поспелиха',
+  'Искитим',
+  'Новосибирск',
+  'Новосибирск (Главный)',
+];
+
+const DEFAULT_CITIES = ['Барнаул'];
 
 export type NotificationCategory =
   | 'priceUp'
@@ -29,7 +43,7 @@ interface PersistedState {
   status: NotificationPermissionStatus;
   prefs: NotificationPrefs;
   expoPushToken: string | null;
-  city: string | null;
+  cities: string[];
 }
 
 const DEFAULT_PREFS: NotificationPrefs = {
@@ -43,7 +57,7 @@ const DEFAULT_STATE: PersistedState = {
   status: 'undetermined',
   prefs: DEFAULT_PREFS,
   expoPushToken: null,
-  city: null,
+  cities: DEFAULT_CITIES,
 };
 
 const toApiSettings = (prefs: NotificationPrefs) => ({
@@ -60,20 +74,20 @@ const toApiSettings = (prefs: NotificationPrefs) => ({
 const postPushToken = async (
   token: string,
   platform: 'ios' | 'android',
-  city: string | null,
+  cities: string[],
   prefs: NotificationPrefs,
 ): Promise<boolean> => {
   console.log('[push] === postPushToken START ===');
   console.log('[push] Supabase configured:', isSupabaseConfigured);
   console.log('[push] token:', token.slice(0, 24) + '…');
   console.log('[push] platform:', platform);
-  console.log('[push] city being saved:', city ?? '<null>, using default: ' + DEFAULT_CITY);
+  console.log('[push] cities:', cities);
   console.log('[push] settings:', toApiSettings(prefs));
 
   const result = await upsertPushToken({
     token,
     platform,
-    city: city ?? DEFAULT_CITY,
+    cities,
     priceIncrease: prefs.priceUp,
     priceDecrease: prefs.priceDown,
     requestStatus: prefs.requestStatus,
@@ -103,7 +117,7 @@ Notifications.setNotificationHandler({
  * 1. Проверяет статус разрешений
  * 2. Если undetermined — запрашивает системное разрешение
  * 3. После получения разрешения — получает Expo Push Token
- * 4. Сохраняет токен в Supabase (город по умолчанию "Барнаул")
+ * 4. Сохраняет токен в Supabase (города по умолчанию ["Барнаул"])
  *
  * Соответствует Apple Guideline 5.1.1: после отказа не показываем
  * повторных popup, не открываем настройки iOS автоматически.
@@ -132,14 +146,16 @@ export const [NotificationsProvider, useNotifications] = createContextHook(() =>
             status: parsed.status ?? 'undetermined',
             prefs: { ...DEFAULT_PREFS, ...(parsed.prefs ?? {}) },
             expoPushToken: parsed.expoPushToken ?? null,
-            city: parsed.city ?? null,
+            cities: Array.isArray(parsed.cities) && parsed.cities.length > 0
+              ? parsed.cities
+              : DEFAULT_CITIES,
           };
           setState(next);
           stateRef.current = next;
           console.log('[push] Loaded persisted state:', {
             status: next.status,
             hasToken: !!next.expoPushToken,
-            city: next.city,
+            cities: next.cities,
             prefs: next.prefs,
           });
         }
@@ -217,13 +233,13 @@ export const [NotificationsProvider, useNotifications] = createContextHook(() =>
       // Шаг 4: сохраняем токен в Supabase
       if (permStatus === 'granted' && token) {
         console.log('[push] Step 4 — saving token to Supabase');
-        const currentCity = stateRef.current.city;
-        console.log('[push] Step 4 — city from state:', currentCity ?? '<null>, will use default:', DEFAULT_CITY);
+        const currentCities = stateRef.current.cities;
+        console.log('[push] Step 4 — cities from state:', currentCities);
 
         const saved = await postPushToken(
           token,
           Platform.OS === 'android' ? 'android' : 'ios',
-          currentCity,
+          currentCities,
           stateRef.current.prefs,
         );
         console.log('[push] Step 4 — token save result:', saved);
@@ -276,11 +292,11 @@ export const [NotificationsProvider, useNotifications] = createContextHook(() =>
       console.log('[push] sync: no token yet, skip');
       return;
     }
-    console.log('[push] sync: sending token to backend, city =', current.city ?? DEFAULT_CITY);
+    console.log('[push] sync: sending token to backend, cities =', current.cities);
     await postPushToken(
       current.expoPushToken,
       Platform.OS === 'android' ? 'android' : 'ios',
-      current.city,
+      current.cities,
       current.prefs,
     );
   }, []);
@@ -345,7 +361,7 @@ export const [NotificationsProvider, useNotifications] = createContextHook(() =>
       if (finalStatus === 'granted' && next.expoPushToken) {
         console.log('[push] Manual — syncing to backend');
         // After the Platform.OS !== 'ios' guard above, we know this is iOS
-        await postPushToken(next.expoPushToken, 'ios', next.city, next.prefs);
+        await postPushToken(next.expoPushToken, 'ios', next.cities, next.prefs);
       }
 
       return finalStatus;
@@ -364,22 +380,42 @@ export const [NotificationsProvider, useNotifications] = createContextHook(() =>
         ...stateRef.current,
         prefs: { ...stateRef.current.prefs, [key]: value },
       };
-      console.log('[push] setPref:', key, '=', value, '| city =', next.city ?? DEFAULT_CITY);
+      console.log('[push] setPref:', key, '=', value, '| cities =', next.cities);
       persist(next);
       void sync(next);
     },
     [persist, sync],
   );
 
-  const setCity = useCallback(
-    (city: string | null): void => {
-      if (stateRef.current.city === city) return;
-      console.log('[push] setCity: changed from', stateRef.current.city, 'to', city);
-      const next: PersistedState = { ...stateRef.current, city };
+  /** Установить список городов для уведомлений. Минимум один город обязателен. */
+  const setCities = useCallback(
+    (cities: string[]): void => {
+      // Предотвращаем пустой выбор
+      const nextCities = cities.length > 0 ? cities : DEFAULT_CITIES;
+      if (
+        stateRef.current.cities.length === nextCities.length &&
+        stateRef.current.cities.every((c, i) => c === nextCities[i])
+      ) {
+        return;
+      }
+      console.log('[push] setCities: changed from', stateRef.current.cities, 'to', nextCities);
+      const next: PersistedState = { ...stateRef.current, cities: nextCities };
       persist(next);
       void sync(next);
     },
     [persist, sync],
+  );
+
+  /** Переключить один город: добавить если нет, убрать если есть. */
+  const toggleCity = useCallback(
+    (city: string): void => {
+      const current = stateRef.current.cities;
+      const nextCities = current.includes(city)
+        ? current.filter((c) => c !== city)
+        : [...current, city];
+      setCities(nextCities);
+    },
+    [setCities],
   );
 
   const syncToBackend = useCallback(async (): Promise<void> => {
@@ -398,12 +434,13 @@ export const [NotificationsProvider, useNotifications] = createContextHook(() =>
     status: state.status,
     prefs: state.prefs,
     expoPushToken: state.expoPushToken,
-    city: state.city,
+    cities: state.cities,
     shouldShowSoftPrompt,
     dismissSoftPrompt,
     requestSystemPermission,
     setPref,
-    setCity,
+    setCities,
+    toggleCity,
     syncToBackend,
   };
 });

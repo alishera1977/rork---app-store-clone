@@ -13,6 +13,8 @@
 //   8. Отправляет одно «умное» уведомление на город (только price_increase = true).
 //   9. Записывает факт отправки в `smart_price_notifications` (защита от повторов).
 //
+// Фильтрация токенов: cities (text[]) содержит targetCity (Postgres @>).
+//
 // Соответствует App Store Guideline 5.1.1: push идёт только подписчикам с
 // явно включённым тоггл-ом соответствующего типа уведомления.
 //
@@ -256,6 +258,10 @@ const sendExpoPush = async (
   }
 };
 
+/**
+ * Получить токены для города — через cities массив (содержит targetCity).
+ * Фильтрация: cities @> ARRAY[targetCity] (Postgres array contains).
+ */
 const fetchTokensFor = async (
   supabase: SupabaseClient,
   city: string,
@@ -264,7 +270,7 @@ const fetchTokensFor = async (
   const { data, error } = await supabase
     .from('push_tokens')
     .select('token')
-    .eq('city', city)
+    .contains('cities', [city])
     .eq(column, true);
   if (error || !data) return [];
   return data.map((r: { token: string }) => r.token).filter(Boolean);
@@ -572,7 +578,7 @@ const trySendSmartNotification = async (
     best.sevenDayAvg,
   );
 
-  // Токены: city + price_increase = true
+  // Токены: cities содержит city + price_increase = true
   const tokens = await fetchTokensFor(supabase, city, 'price_increase');
   if (tokens.length === 0) {
     console.log('[check-prices] smart notif: no tokens for', city);

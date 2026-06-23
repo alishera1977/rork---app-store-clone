@@ -164,7 +164,7 @@ const fetchTokensFor = async (
     const { data, error } = await supabase
       .from('push_tokens')
       .select('token')
-      .eq('city', city)
+      .contains('cities', [city])
       .eq(settingColumn, true);
     if (error || !data) return [];
     return data.map((r: { token: string }) => r.token).filter(Boolean);

@@ -13,8 +13,7 @@ import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 
 import { getSupabase, isSupabaseConfigured } from '@/services/supabase';
-import { upsertPushToken } from '@/services/pushTokens';
-import { useNotifications } from '@/hooks/useNotifications';
+import { useNotifications, ALL_CITIES } from '@/hooks/useNotifications';
 import { useAppTheme } from '@/hooks/useAppTheme';
 import type { AppColors } from '@/constants/colors';
 import {
@@ -168,14 +167,14 @@ export default function PushDebugPanel() {
     // Step 4 — save to Supabase
     update({ step: 'Сохранение токена в Supabase push_tokens…' });
 
-    const city = notif.city ?? DEFAULT_CITY;
+    const cities = notif.cities.length > 0 ? notif.cities : [DEFAULT_CITY];
     const platform: 'ios' | 'android' =
       Platform.OS === 'android' ? 'android' : 'ios';
 
     const payload = {
       token: tCopy.pushToken,
       platform,
-      city,
+      cities,
       priceIncrease: notif.prefs.priceUp,
       priceDecrease: notif.prefs.priceDown,
       requestStatus: notif.prefs.requestStatus,
@@ -213,7 +212,7 @@ export default function PushDebugPanel() {
           {
             token: payload.token,
             platform: payload.platform,
-            city: payload.city,
+            cities: payload.cities,
             price_increase: payload.priceIncrease,
             price_decrease: payload.priceDecrease,
             request_status: payload.requestStatus,
@@ -248,7 +247,7 @@ export default function PushDebugPanel() {
         finished: true,
       });
     }
-  }, [hasUrl, hasKey, supabaseUrl, notif.city, notif.prefs]);
+  }, [hasUrl, hasKey, supabaseUrl, notif.cities, notif.prefs]);
 
   // ── "Test smart price notification" button ──
   const handleSmartTest = useCallback(async () => {
@@ -261,7 +260,7 @@ export default function PushDebugPanel() {
     };
     let stCopy = { ...st };
 
-    const city = notif.city ?? DEFAULT_CITY;
+    const city = notif.cities.length > 0 ? notif.cities[0] : DEFAULT_CITY;
     update({ step: `Анализ цен для города «${city}»…`, city });
 
     if (!hasUrl || !hasKey) {
@@ -335,7 +334,7 @@ export default function PushDebugPanel() {
         finished: true,
       });
     }
-  }, [hasUrl, hasKey, notif.city]);
+  }, [hasUrl, hasKey, notif.cities]);
 
   if (!expanded) {
     return (
@@ -373,7 +372,7 @@ export default function PushDebugPanel() {
           <Row label="Supabase URL задан" value={hasUrl ? '✅ true' : '❌ false'} styles={styles} error={!hasUrl} />
           <Row label="Supabase Key задан" value={hasKey ? '✅ true' : '❌ false'} styles={styles} error={!hasKey} />
           <Row label="isSupabaseConfigured" value={isSupabaseConfigured ? 'true' : 'false'} styles={styles} error={!isSupabaseConfigured} />
-          <Row label="getSupabase()" value={supabaseReady ? `✅ client created` : '❌ NULL'} styles={styles} error={!supabaseReady} />
+          <Row label="getSupabase()" value={supabaseReady ? '✅ client created' : '❌ NULL'} styles={styles} error={!supabaseReady} />
           <Row label="Rork Project ID (env)" value={rorkProjectId || '❌ не задан'} styles={styles} />
           <Row label="EAS projectId (app.json)" value={easProjectId || '❌ не задан'} styles={styles} error={!easProjectId} />
           {hasUrl && (
@@ -389,9 +388,66 @@ export default function PushDebugPanel() {
           <Row label="hydrated" value={String(notif.hydrated)} styles={styles} />
           <Row label="status" value={notif.status} styles={styles} error={notif.status !== 'granted'} />
           <Row label="Expo Push Token" value={notif.expoPushToken ? notif.expoPushToken.slice(0, 32) + '…' : '❌ null'} styles={styles} error={!notif.expoPushToken} />
-          <Row label="City" value={notif.city ?? 'null (default: ' + DEFAULT_CITY + ')'} styles={styles} />
+          <Row
+            label="Города (cities)"
+            value={notif.cities.length > 0 ? notif.cities.join(', ') : '❌ пусто'}
+            styles={styles}
+            error={notif.cities.length === 0}
+          />
           <Row label="Prefs" value={JSON.stringify(notif.prefs)} styles={styles} />
           <Row label="Requesting" value={String(notif.requesting)} styles={styles} />
+        </View>
+
+        {/* ── Cities Multi-Select ── */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Города уведомлений</Text>
+          <Text style={styles.helpText}>
+            Выберите города, для которых хотите получать push-уведомления.
+            Минимум один город обязателен.
+          </Text>
+
+          {/* Select All / Deselect All */}
+          <View style={styles.citiesActions}>
+            <TouchableOpacity
+              style={styles.citiesActionButton}
+              onPress={() => notif.setCities(ALL_CITIES)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.citiesActionText}>Выбрать все города</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.citiesActionButton, styles.citiesActionSecondary]}
+              onPress={() => notif.setCities(['Барнаул'])}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.citiesActionText, styles.citiesActionTextSecondary]}>
+                Сбросить
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* City chips */}
+          <View style={styles.citiesGrid}>
+            {ALL_CITIES.map((city) => {
+              const isSelected = notif.cities.includes(city);
+              return (
+                <TouchableOpacity
+                  key={city}
+                  style={[styles.cityChip, isSelected ? styles.cityChipActive : styles.cityChipInactive]}
+                  onPress={() => notif.toggleCity(city)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.cityChipText, isSelected ? styles.cityChipTextActive : styles.cityChipTextInactive]}>
+                    {isSelected ? '✓ ' : ''}{city}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <Text style={styles.helpText}>
+            Выбрано: {notif.cities.length} из {ALL_CITIES.length}
+          </Text>
         </View>
 
         {/* ── Test Button ── */}
@@ -627,6 +683,68 @@ const createStyles = (Colors: AppColors) =>
       paddingBottom: 4,
       borderBottomWidth: 1,
       borderBottomColor: Colors.border,
+    },
+    helpText: {
+      fontSize: 11,
+      color: Colors.textTertiary,
+      marginBottom: 10,
+      lineHeight: 16,
+    },
+    citiesActions: {
+      flexDirection: 'row',
+      gap: 8,
+      marginBottom: 10,
+    },
+    citiesActionButton: {
+      flex: 1,
+      backgroundColor: Colors.accentBg,
+      borderRadius: 8,
+      paddingVertical: 8,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: Colors.accent + '30',
+    },
+    citiesActionSecondary: {
+      backgroundColor: Colors.bgInput,
+      borderColor: Colors.border,
+    },
+    citiesActionText: {
+      fontSize: 12,
+      fontWeight: '600' as const,
+      color: Colors.accent,
+    },
+    citiesActionTextSecondary: {
+      color: Colors.textSecondary,
+    },
+    citiesGrid: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 6,
+      marginBottom: 8,
+    },
+    cityChip: {
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 16,
+      borderWidth: 1,
+    },
+    cityChipActive: {
+      backgroundColor: Colors.primaryBg,
+      borderColor: Colors.primary,
+    },
+    cityChipInactive: {
+      backgroundColor: Colors.bgInput,
+      borderColor: Colors.border,
+    },
+    cityChipText: {
+      fontSize: 12,
+      fontWeight: '500' as const,
+    },
+    cityChipTextActive: {
+      color: Colors.primary,
+    },
+    cityChipTextInactive: {
+      color: Colors.textSecondary,
     },
     row: {
       flexDirection: 'row',

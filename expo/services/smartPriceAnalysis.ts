@@ -75,33 +75,6 @@ const avgOrNull = (values: number[]): number | null => {
   return filtered.reduce((a, b) => a + b, 0) / filtered.length;
 };
 
-// ── Получение средней цены за N дней ──
-
-const getAvgPrice = async (
-  city: string,
-  metalName: string,
-  days: number,
-): Promise<number | null> => {
-  const supabase = getSupabase();
-  if (!supabase) return null;
-
-  const since = new Date();
-  since.setDate(since.getDate() - days);
-  const sinceStr = since.toISOString().slice(0, 10);
-
-  const { data, error } = await supabase
-    .from('price_history')
-    .select('current_price')
-    .eq('city', city)
-    .eq('metal_name', metalName)
-    .gte('date', sinceStr)
-    .order('date', { ascending: false })
-    .limit(days);
-
-  if (error || !data || data.length === 0) return null;
-  return avgOrNull(data.map((r: { current_price: number }) => r.current_price));
-};
-
 // ── Проверка: отправлено ли уже уведомление сегодня ──
 
 const wasSmartNotifSentToday = async (city: string): Promise<boolean> => {
@@ -383,7 +356,7 @@ export interface SendSmartResult {
 /**
  * Отправить «умное» push-уведомление для города.
  * Проверяет дубликаты, выбирает лучший металл, фильтрует токены
- * (только price_increase = true) и отправляет.
+ * (только price_increase = true, cities содержит targetCity) и отправляет.
  */
 export const sendSmartNotification = async (
   city: string,
@@ -432,11 +405,11 @@ export const sendSmartNotification = async (
   const best = analysis.bestMetal;
   const body = generateBody(best);
 
-  // Получаем токены: city + price_increase = true
+  // Получаем токены: cities содержит city + price_increase = true
   const { data: tokenRows, error: tokenErr } = await supabase
     .from('push_tokens')
     .select('token')
-    .eq('city', city)
+    .contains('cities', [city])
     .eq('price_increase', true);
 
   if (tokenErr) {

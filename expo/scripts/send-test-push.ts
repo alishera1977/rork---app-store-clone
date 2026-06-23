@@ -16,7 +16,7 @@ async function main() {
 
   console.log("🔍 Fetching push tokens from Supabase…");
 
-  const { data, error } = await supabase.from("push_tokens").select("token, platform, city");
+  const { data, error } = await supabase.from("push_tokens").select("token, platform, cities");
 
   if (error) {
     console.error("❌ Supabase query failed:", error);
@@ -31,7 +31,8 @@ async function main() {
   const tokens = data.map((r: { token: string }) => r.token).filter(Boolean);
   console.log(`📋 Found ${data.length} token(s):`);
   data.forEach((r) => {
-    console.log(`   - ${r.token.slice(0, 24)}… | platform=${r.platform} | city=${r.city}`);
+    const cities = Array.isArray(r.cities) ? r.cities.join(', ') : 'none';
+    console.log(`   - ${r.token.slice(0, 24)}… | platform=${r.platform} | cities=${cities}`);
   });
 
   if (tokens.length === 0) {

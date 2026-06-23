@@ -95,8 +95,8 @@ interface TargetFilter {
 }
 
 /**
- * Получить активные токены по фильтру (город + включённая категория).
- * Подготовлено для будущих расширений (тип металла можно добавить как колонку).
+ * Получить активные токены по фильтру (город — через cities массива + включённая категория).
+ * Фильтрация: cities содержит targetCity (Postgres array contains).
  */
 const fetchTargetTokens = async (filter: TargetFilter): Promise<string[]> => {
   const supabase = getSupabase();
@@ -107,7 +107,8 @@ const fetchTargetTokens = async (filter: TargetFilter): Promise<string[]> => {
       query = query.eq(filter.requireSetting, true);
     }
     if (filter.city) {
-      query = query.eq('city', filter.city);
+      // Используем contains для поиска по массиву cities
+      query = query.contains('cities', [filter.city]);
     }
     const { data, error } = await query;
     if (error || !data) return [];

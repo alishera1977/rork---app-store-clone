@@ -28,6 +28,7 @@ import {
   TrendingDown,
   Truck,
   Megaphone,
+  Bell,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { useQuery } from '@tanstack/react-query';
@@ -35,7 +36,7 @@ import { useQuery } from '@tanstack/react-query';
 import { AppColors } from '@/constants/colors';
 import { useAppTheme } from '@/hooks/useAppTheme';
 import { fetchVacancies, fetchSettings } from '@/services/api';
-import { useNotifications, NotificationCategory } from '@/hooks/useNotifications';
+import { useNotifications, NotificationCategory, ALL_CITIES } from '@/hooks/useNotifications';
 import PushDebugPanel from '@/components/PushDebugPanel';
 
 export default function MoreScreen() {
@@ -48,6 +49,9 @@ export default function MoreScreen() {
     setPref: setNotifPref,
     requestSystemPermission,
     requesting: notifRequesting,
+    cities: notifCities,
+    toggleCity,
+    setCities,
   } = useNotifications();
 
   const onTogglePref = useCallback(
@@ -344,6 +348,68 @@ export default function MoreScreen() {
                 Уведомления отключены. Включить их можно в системных настройках устройства.
               </Text>
             )}
+
+            {/* ── Города уведомлений ── */}
+            <View style={styles.sectionLabel}>
+              <Text style={styles.sectionTitle}>Города уведомлений</Text>
+            </View>
+
+            <View style={styles.citiesCard}>
+              <View style={styles.citiesHeaderRow}>
+                <Bell size={16} color={Colors.primary} />
+                <Text style={styles.citiesHelpText}>
+                  Выберите города, для которых хотите получать push-уведомления. Минимум один город обязателен.
+                </Text>
+              </View>
+
+              {/* Select All / Reset */}
+              <View style={styles.citiesActions}>
+                <TouchableOpacity
+                  style={styles.citiesActionBtn}
+                  onPress={() => setCities(ALL_CITIES)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.citiesActionBtnText}>Выбрать все города</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.citiesActionBtn, styles.citiesActionBtnSecondary]}
+                  onPress={() => setCities(['Барнаул'])}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.citiesActionBtnText, styles.citiesActionBtnTextSecondary]}>
+                    Сбросить
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* City chips */}
+              <View style={styles.citiesGrid}>
+                {ALL_CITIES.map((city) => {
+                  const isSelected = notifCities.includes(city);
+                  return (
+                    <TouchableOpacity
+                      key={city}
+                      style={[styles.cityChip, isSelected ? styles.cityChipActive : styles.cityChipInactive]}
+                      onPress={() => toggleCity(city)}
+                      activeOpacity={0.7}
+                    >
+                      <Text
+                        style={[
+                          styles.cityChipText,
+                          isSelected ? styles.cityChipTextActive : styles.cityChipTextInactive,
+                        ]}
+                      >
+                        {isSelected ? '✓ ' : ''}{city}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <Text style={styles.citiesCount}>
+                Выбрано: {notifCities.length} из {ALL_CITIES.length}
+              </Text>
+            </View>
           </>
         )}
 
@@ -653,5 +719,87 @@ const createStyles = (Colors: AppColors) => StyleSheet.create({
     paddingHorizontal: 6,
     marginTop: 4,
     lineHeight: 18,
+  },
+  // ── Cities Multi-Select ──
+  citiesCard: {
+    backgroundColor: Colors.bgCard,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  citiesHeaderRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+    alignItems: 'flex-start',
+  },
+  citiesHelpText: {
+    flex: 1,
+    fontSize: 12,
+    color: Colors.textSecondary,
+    lineHeight: 18,
+  },
+  citiesActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  citiesActionBtn: {
+    flex: 1,
+    backgroundColor: Colors.accentBg,
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.accent + '30',
+  },
+  citiesActionBtnSecondary: {
+    backgroundColor: Colors.bgInput,
+    borderColor: Colors.border,
+  },
+  citiesActionBtnText: {
+    fontSize: 13,
+    fontWeight: '600' as const,
+    color: Colors.accent,
+  },
+  citiesActionBtnTextSecondary: {
+    color: Colors.textSecondary,
+  },
+  citiesGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 10,
+  },
+  cityChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  cityChipActive: {
+    backgroundColor: Colors.primaryBg,
+    borderColor: Colors.primary,
+  },
+  cityChipInactive: {
+    backgroundColor: Colors.bgInput,
+    borderColor: Colors.border,
+  },
+  cityChipText: {
+    fontSize: 13,
+    fontWeight: '500' as const,
+  },
+  cityChipTextActive: {
+    color: Colors.primary,
+  },
+  cityChipTextInactive: {
+    color: Colors.textSecondary,
+  },
+  citiesCount: {
+    fontSize: 11,
+    color: Colors.textTertiary,
+    textAlign: 'center',
   },
 });
